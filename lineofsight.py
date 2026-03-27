@@ -1,0 +1,214 @@
+#lineofsight.py
+#once ray is constructed, find the cells that it intersects.
+#compute slope to each cell.
+#cell is visible iff it is not behind a cell with a greater slope.
+#repeat for each coordinate, then aggregate.
+
+import numpy as np
+import math
+from typing import Iterable, Tuple, Optional
+from affine import Affine
+from rasterio.transform import rowcol
+from raycasting import cast_rays_360
+
+
+def cell_centre(affine: Affine, r: int, c: int): #compute centre of cell.
+    E, N = affine * (c + 0.5, r + 0.5)
+    return E, N
+
+
+def aggregate_line_of_sight(vis_mask, E0, N0, dem, src, affine, observer_height,
+                        square_size_m=100, n_rays=360, fade_distance=50.0):
+
+        hits = cast_rays_360(E0, N0, square_size_m=square_size_m, n_rays=n_rays, affine=affine) #cast rays.
+
+        for (Eh, Nh) in hits: #for the length of each ray.
+            cells = list(cells_crossed(affine, src.width, src.height, E0, N0, Eh, Nh)) #compute which cells were passed through.
+            if not cells: #in case none were found, skip this ray.
+                continue
+
+            strengths = line_of_sight_strength(
+                cells,
+                dem,
+                affine,
+                E0,
+                N0,
+                observer_height,
+                nodata=src.nodata,
+                fade_distance=fade_distance
+            ) #for each cell along a ray, calculate its degree of visibility.
+
+            for (r, c), strength in zip(cells, strengths):
+                if np.isnan(vis_mask[r, c]):
+                    vis_mask[r, c] = strength #if pixel hasn't been processed yet, store current strength.
+                else:
+                    vis_mask[r, c] = max(vis_mask[r, c], strength) #if pixel has been processed, store the maximum strength. (in case coordinate viewpoints overlap)
+
+        return vis_mask #return overlay.
+
+
+def line_of_sight(
+    cells: Iterable[Tuple[int, int]],
+    dem,                      # 2D array: dem[r][c] or dem[r, c]
+    affine: Affine,
+    E0: float,
+    N0: float,
+    observer_height: float = 0,
+    nodata: Optional[float] = None,
+    eps: float = 1e-12,
+):
+
+    cells = list(cells) #convert iterable to list to allow indexing.
+    if not cells:
+        return []
+
+    r0, c0 = cells[0] #begin at first cell (observer's point).
+    z0 = float(dem[r0, c0]) + observer_height #find DEM elevation at observer's height.
+
+    visible = [True]
+    max_slope = -math.inf #track the maximum slope seen so far (any slope is greater than negative infinity, so default to that).
+
+    for (r, c) in cells[1:]:
+        z = float(dem[r, c]) #read terrain height of cell.
+        if nodata is not None and z == nodata: #if there is an issue, mark as "invisible" by default.
+            visible.append(False)
+            continue
+
+        E, N = cell_centre(affine, r, c) #find world coordinate of cell's centre.
+
+        d = math.hypot(E - E0, N - N0) #find distance from observer to cell.
+        if d < eps:
+            visible.append(True)
+            continue
+
+        s = (z - z0) / d #find slope from observer to cell.
+
+        if s > max_slope: #if slope is greater than the previous max slope, update max slope.
+            visible.append(True) #make it visible.
+            max_slope = s
+        else:
+            visible.append(False) #else it cannot be visible since it lies behind the existing max slope.
+
+    return visible #return the visibility list for each cell.
+
+
+def line_of_sight_strength(
+    cells: Iterable[Tuple[int, int]],
+    dem,
+    affine: Affine,
+    E0: float,
+    N0: float,
+    observer_height: float = 0,
+    nodata: Optional[float] = None,
+    fade_distance: float = 50.0,
+    eps: float = 1e-12,
+):
+    cells = list(cells) #convert cells to a list.
+    if not cells:
+        return [] #if no cells were inputted, stop the function.
+
+    r0, c0 = cells[0] #begin at observer's cell.
+    z0 = float(dem[r0, c0]) + observer_height #fetch ground height at observer's cell.
+
+    strengths = [1.0] #begin the list of visiblity strengths, the observer's cell is treated as fully visible.
+    max_slope = -math.inf #the steepest line of sight angle seen is defaulted to negative infinity.
+
+    for (r, c) in cells[1:]: #for every cell.
+        z = float(dem[r, c]) #obtain ground height of cell.
+        if nodata is not None and z == nodata:
+            strengths.append(0.0)
+            continue #if cell doesn't contain data, move on.
+
+        E, N = cell_centre(affine, r, c) #work out coordinates of centre of cell.
+        d = math.hypot(E - E0, N - N0) #calculate distance from observer to this cell.
+
+        if d < eps:
+            strengths.append(1.0)
+            continue
+
+        s = (z - z0) / d #calculate slope to observer.
+
+        if s > max_slope:
+            max_slope = s #if cell has the steepest angle so far, it cannot be hidden behind an earlier point.
+
+            strength = max(0.0, 1.0 - d / fade_distance) #visbility is inversely proportional to distance.
+            strengths.append(strength) #add strength for current cell.
+        else:
+            strengths.append(0.0) #if cell does not have the steepest angle so far then it is blocked, so it is invisible.
+
+    return strengths #return list of visibility strengths.
+
+
+def cells_crossed(
+    affine: Affine,
+    width: int,
+    height: int,
+    E0: float,
+    N0: float,
+    E1: float,
+    N1: float,
+    eps: float = 1e-12,
+):
+
+    dE = E1 - E0
+    dN = N1 - N0 #define direction vector given start and end points.
+
+    r, c = rowcol(affine, E0, N0) #define r,c of start point
+    r_end, c_end = rowcol(affine, E1, N1) #define r,c of end point
+
+    if not (0 <= r < height and 0 <= c < width):
+        return #do not allow indexing outside the raster grid.
+
+    yield (r, c) #output starting cell, then continue.
+
+    resE = affine.a
+    resN = -affine.e  #find the width and height of a single pixel as defined by the raster file.
+
+    step_c = 1 if dE > 0 else (-1 if dE < 0 else 0) #find if ray points east or west.
+    step_r = 1 if dN < 0 else (-1 if dN > 0 else 0) #find if ray points north or south.
+
+    x_left, y_top = affine * (c, r)
+    x_right = x_left + resE
+    y_bottom = y_top - resN #find rectangle bounds of current cell as world coordinates.
+
+    def safe_div(num: float, den: float) -> float:
+        return num / den if abs(den) > eps else math.inf #avoid division by 0 if we are perfectly horizontal or vertical.
+
+    if step_c > 0:
+        tMaxX = safe_div(x_right - E0, dE)
+    elif step_c < 0:
+        tMaxX = safe_div(x_left - E0, dE)
+    else:
+        tMaxX = math.inf
+
+    #find how far we would need to travel to hit a horizontal border.
+
+    if step_r > 0:
+        tMaxY = safe_div(y_bottom - N0, dN)
+    elif step_r < 0:
+        tMaxY = safe_div(y_top - N0, dN)
+    else:
+        tMaxY = math.inf
+
+    #find how far we would need to travel to hit a vertical border.
+
+    tDeltaX = abs(resE / dE) if abs(dE) > eps else math.inf #set jump size for vertical boundary lines.
+    tDeltaY = abs(resN / dN) if abs(dN) > eps else math.inf #set jump size for horiztontal boundary lines.
+
+    while (r, c) != (r_end, c_end): #until we hit the boundary line.
+        if tMaxX + eps < tMaxY: #if we will hit a vertical boundary first, move into neighbouring column.
+            c += step_c
+            tMaxX += tDeltaX
+        elif tMaxY + eps < tMaxX: #if we will hit a vertical boundary first, move into neighbouring row.
+            r += step_r
+            tMaxY += tDeltaY
+        else: #if we will hit a corner, move into diagonally neighbouring square.
+            c += step_c
+            r += step_r
+            tMaxX += tDeltaX
+            tMaxY += tDeltaY
+
+        if not (0 <= r < height and 0 <= c < width):
+            return
+
+        yield (r, c) #output new cell we have moved into.
