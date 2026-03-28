@@ -17,35 +17,38 @@ def cell_centre(affine: Affine, r: int, c: int): #compute centre of cell.
     return E, N
 
 
-def aggregate_line_of_sight(vis_mask, E0, N0, dem, src, affine, observer_height,
-                        square_size_m=100, n_rays=360, fade_distance=50.0):
+def aggregate_line_of_sight(raw_mask, count_mask, E0, N0, dem, src, affine, observer_height,
+                        square_size_m=100, n_rays=360, bearing_deg=None, fan_angle_deg=360.0):
 
-        hits = cast_rays_360(E0, N0, square_size_m=square_size_m, n_rays=n_rays, affine=affine) #cast rays.
-
+        hits = cast_rays_360(E0, N0, square_size_m=square_size_m, n_rays=n_rays, affine=affine, bearing_deg=bearing_deg,
+        fan_angle_deg=fan_angle_deg) #cast rays.
+        raw_this_view = np.zeros_like(raw_mask, dtype=bool) #a mask with exactly the same function as raw_mask, just temporary.
+        seen_this_view = np.zeros_like(count_mask, dtype=bool) #a mask with exactly the same function as count_mask, just temporary.
         for (Eh, Nh) in hits: #for the length of each ray.
             cells = list(cells_crossed(affine, src.width, src.height, E0, N0, Eh, Nh)) #compute which cells were passed through.
             if not cells: #in case none were found, skip this ray.
                 continue
 
-            strengths = line_of_sight_strength(
-                cells,
-                dem,
-                affine,
-                E0,
-                N0,
-                observer_height,
-                nodata=src.nodata,
-                fade_distance=fade_distance
-            ) #for each cell along a ray, calculate its degree of visibility.
+            for (r, c) in cells:
+                raw_this_view[r, c] = True #if cell lies anywhere inside the swept sector, mark it in the raw overlay.
 
-            for (r, c), strength in zip(cells, strengths):
-                if np.isnan(vis_mask[r, c]):
-                    vis_mask[r, c] = strength #if pixel hasn't been processed yet, store current strength.
-                else:
-                    vis_mask[r, c] = max(vis_mask[r, c], strength) #if pixel has been processed, store the maximum strength. (in case coordinate viewpoints overlap)
+            visible = line_of_sight(
+            cells,
+            dem,
+            affine,
+            E0,
+            N0,
+            observer_height,
+            nodata=src.nodata
+        ) #retrieve visibility data on each cell, either seen or not seen.
 
-        return vis_mask #return overlay.
+            for (r, c), is_visible in zip(cells, visible):
+                if is_visible:
+                    seen_this_view[r, c] = True #if cell is seen at all, mark it as visible.
 
+        raw_mask[raw_this_view] += 1 #increment 1 to the cells that lay anywhere inside the sector footprint.
+        count_mask[seen_this_view] += 1 #increment 1 to the cells that were seen at all (note: only 1 is added to avoid overcounting from distinct rays intersecting the same cell).
+        return raw_mask, count_mask
 
 def line_of_sight(
     cells: Iterable[Tuple[int, int]],
@@ -91,52 +94,6 @@ def line_of_sight(
 
     return visible #return the visibility list for each cell.
 
-
-def line_of_sight_strength(
-    cells: Iterable[Tuple[int, int]],
-    dem,
-    affine: Affine,
-    E0: float,
-    N0: float,
-    observer_height: float = 0,
-    nodata: Optional[float] = None,
-    fade_distance: float = 50.0,
-    eps: float = 1e-12,
-):
-    cells = list(cells) #convert cells to a list.
-    if not cells:
-        return [] #if no cells were inputted, stop the function.
-
-    r0, c0 = cells[0] #begin at observer's cell.
-    z0 = float(dem[r0, c0]) + observer_height #fetch ground height at observer's cell.
-
-    strengths = [1.0] #begin the list of visiblity strengths, the observer's cell is treated as fully visible.
-    max_slope = -math.inf #the steepest line of sight angle seen is defaulted to negative infinity.
-
-    for (r, c) in cells[1:]: #for every cell.
-        z = float(dem[r, c]) #obtain ground height of cell.
-        if nodata is not None and z == nodata:
-            strengths.append(0.0)
-            continue #if cell doesn't contain data, move on.
-
-        E, N = cell_centre(affine, r, c) #work out coordinates of centre of cell.
-        d = math.hypot(E - E0, N - N0) #calculate distance from observer to this cell.
-
-        if d < eps:
-            strengths.append(1.0)
-            continue
-
-        s = (z - z0) / d #calculate slope to observer.
-
-        if s > max_slope:
-            max_slope = s #if cell has the steepest angle so far, it cannot be hidden behind an earlier point.
-
-            strength = max(0.0, 1.0 - d / fade_distance) #visbility is inversely proportional to distance.
-            strengths.append(strength) #add strength for current cell.
-        else:
-            strengths.append(0.0) #if cell does not have the steepest angle so far then it is blocked, so it is invisible.
-
-    return strengths #return list of visibility strengths.
 
 
 def cells_crossed(
