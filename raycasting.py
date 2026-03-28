@@ -56,7 +56,10 @@ def cast_rays_360(
     N0: float,
     square_size_m: float = 100.0,
     n_rays: int = 360,
-    affine=None
+    affine=None,
+    heading_deg: Optional[float] = None, 
+    fan_angle_deg: float = 360.0
+    
 ):
 
     if affine is None: #if no affine passed, raise an error.
@@ -66,8 +69,16 @@ def cast_rays_360(
     half = square_size_m / 2
     hits: List[Tuple[float, float]] = []
 
-    for k in range(n_rays):
-        theta = 2 * math.pi * (k / n_rays) #convert to radians.
+    centre_theta = math.radians(90 - heading_deg) #since 0 is east in Python convention, the angle must be converted to a compass bearing.
+    half_fan = math.radians(fan_angle_deg) / 2.0 #sector is centre +- half_fan to ensure symmetry.
+
+    thetas = [
+                centre_theta - half_fan + k * (2 * half_fan / (n_rays - 1))
+                for k in range(n_rays)
+    ] #angles to be swept through.
+
+    
+    for theta in thetas:
         hit = ray_hit_square(E0, N0, half, theta) #find ray for a given angle.
         if hit is None:
             continue
