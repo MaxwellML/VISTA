@@ -485,7 +485,7 @@ def start_gui(run_program): #entry point for the program.
 
                 if ext not in [".tif", ".tiff"]: #if ending isn't ".tif" or ".tiff"...
                     raise ValueError(f"Unsupported file type: {ext}") #...raise an error.
-                
+                    
             def load_file():
                 global tif_path
                 file_path = filedialog.askopenfilename(
@@ -518,8 +518,11 @@ def start_gui(run_program): #entry point for the program.
             file_label = ttk.Label(top_bar, textvariable=selected_file_var) #label for currently selected file, or default text if no file loaded.
             file_label.pack(side="left", padx=10) #move to the leftmost side, next to the button.
 
+            metadata_button = ttk.Button(top_bar, text="Metadata CSV", command=load_metadata_file) #create button that runs "load_metadata_file" when clicked.
+            metadata_button.pack(side="left", padx=(20, 0)) #move to the leftmost side, next to the file path.
+
             metadata_title_label = ttk.Label(top_bar, text="Metadata CSV:") #label for metadata CSV path.
-            metadata_title_label.pack(side="left", padx=(20, 4)) #move to the leftmost side, next to the button.
+            metadata_title_label.pack(side="left", padx=(12, 4)) #move to the leftmost side, next to the button.
 
             metadata_label = ttk.Label(top_bar, textvariable=selected_metadata_var) #label for currently selected metadata CSV, or default text if no file loaded.
             metadata_label.pack(side="left", padx=10) #move to the leftmost side, next to the button.

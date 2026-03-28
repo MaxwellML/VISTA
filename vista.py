@@ -7,8 +7,7 @@ from matplotlib.patches import Rectangle
 from pyproj import Transformer
 import numpy as np
 from matplotlib.colors import ListedColormap
-from raycasting import cast_rays_360
-from lineofsight import cells_crossed, line_of_sight, line_of_sight_strength, aggregate_line_of_sight
+from lineofsight import aggregate_line_of_sight
 import matplotlib.patches as mpatches
 from matplotlib.lines import Line2D
 from matplotlib.colors import LinearSegmentedColormap
@@ -16,7 +15,6 @@ import math
 from randomisedirection import perturb_heading
 
 
-s
 def run_program(sample_metadata, tif_path, ax=None, show_reference=False):
     with rasterio.open(tif_path) as src:
 
