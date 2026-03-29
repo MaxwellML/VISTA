@@ -44,7 +44,6 @@ def start_gui(run_program): #entry point for the program.
             self.dem_transform = None #store raster transformer.
             self.dem_crs = None #store raster CRS.
             self.dem_path = None #store file path to DEM.
-            self.raw_overlay = None #store raw sector overlay result.
             self.count_overlay = None #store frequency count result.
             self.observer_points_xy = [] #store observer cooridnates.
 
@@ -59,12 +58,9 @@ def start_gui(run_program): #entry point for the program.
             self.title_label.grid(row=0, column=0, sticky="w", pady=(0, 6)) #position Title.
 
             self.fig = Figure(figsize=(11, 5.8), dpi=100) #create a Matplotlib Figure object.
-            self.ax_raw = self.fig.add_subplot(121) #add axes.
-            self.ax_count = self.fig.add_subplot(122, sharex=self.ax_raw, sharey=self.ax_raw) #add axes.
-            self.ax_raw.set_title("No DEM loaded") #if no DEM loaded, inform user.
+            self.ax_count = self.fig.add_subplot(111) #add axes.
             self.ax_count.set_title("No DEM loaded") #if no DEM loaded, inform user.
-            self.ax_raw.set_xticks([])
-            self.ax_raw.set_yticks([]) #do not show ticks around empty canvas message.
+
             self.ax_count.set_xticks([])
             self.ax_count.set_yticks([]) #do not show ticks around empty canvas message.
 
@@ -79,9 +75,7 @@ def start_gui(run_program): #entry point for the program.
             self.toolbar.pack(side="left") #move toolbar to the left.
             
             self.show_overlay = tk.BooleanVar(value=True) #create a Boolean state for whether overlay should be visible, default to show.
-            self.raw_overlay_im = None #default to no overlay image.
             self.count_overlay_im = None #default to no overlay image.
-            self.raw_overlay_cbar = None #default to no colour bar.
             self.count_overlay_cbar = None #default to no colour bar.
 
             self.view_xlim = None
@@ -109,7 +103,7 @@ def start_gui(run_program): #entry point for the program.
         def on_click(self, event): #when the user clicks mouse.
             if self.dem is None:
                 return
-            if event.inaxes not in (self.ax_raw, self.ax_count):
+            if event.inaxes != self.ax_count:
                 return #if click happens outside of canvas, do nothing.
             if event.xdata is None or event.ydata is None:
                 return #if the graph coordinates cannot be worked out, do nothing.
@@ -124,9 +118,6 @@ def start_gui(run_program): #entry point for the program.
                 transformer = Transformer.from_crs(self.dem_crs, "EPSG:4326", always_xy=True) #create DEM transformer.
                 lon, lat = transformer.transform(x, y) #convert clicked position into longitude and latitude.
                 self.point_selected_callback(lon, lat) #send coordinates to helper function.
-            if self.ax_raw.has_data():
-                self.view_xlim = self.ax_raw.get_xlim()
-                self.view_ylim = self.ax_raw.get_ylim()
 
             self._redraw()
 
@@ -138,16 +129,14 @@ def start_gui(run_program): #entry point for the program.
                 self.dem_crs = src.crs #read in CRS.
                 self.dem_path = dem_path #read in file path.
 
-            self.raw_overlay = None
             self.count_overlay = None
             self.observer_points_xy = []
             self._redraw()
 
-        def set_results(self, raw_overlay, count_overlay, observer_points=None, view_extent=None):
+        def set_results(self, count_overlay, observer_points=None, view_extent=None):
             if self.dem is None:
                 raise ValueError("Load a DEM before setting an overlay.") #check a DEM file is present.
 
-            self.raw_overlay = raw_overlay #store DEM LoS render.
             self.count_overlay = count_overlay #store DEM LoS render.
             self.observer_points_xy = observer_points if observer_points is not None else [] #store observer coordinates.
             self.view_extent = view_extent #store automatic zoom for the current result.
@@ -159,14 +148,9 @@ def start_gui(run_program): #entry point for the program.
         def toggle_overlay(self): #toggle overlay on/off.
             show = self.show_overlay.get() #retrieve current toggle state.
 
-            if self.raw_overlay_im is not None: #if overlay exists.
-                self.raw_overlay_im.set_visible(show) #toggle on/off.
 
             if self.count_overlay_im is not None: #if overlay exists.
                 self.count_overlay_im.set_visible(show) #toggle on/off.
-
-            if self.raw_overlay_cbar is not None: #if colourbar exists.
-                self.raw_overlay_cbar.ax.set_visible(show) #toggle on/off.
 
             if self.count_overlay_cbar is not None: #if colourbar exists.
                 self.count_overlay_cbar.ax.set_visible(show) #toggle on/off.
@@ -174,30 +158,22 @@ def start_gui(run_program): #entry point for the program.
             self.canvas.draw_idle() #update display.
 
         def clear_overlay(self):
-            self.raw_overlay = None #remove any previous overlay.
             self.count_overlay = None #remove any previous overlay.
             self.observer_points_xy = [] #remove any previous observer point.
             self._redraw() #render preview area again.
 
         def _remove_colourbars(self):
-            if self.raw_overlay_cbar is not None:
-                self.raw_overlay_cbar.remove()
-                self.raw_overlay_cbar = None
 
             if self.count_overlay_cbar is not None:
                 self.count_overlay_cbar.remove()
                 self.count_overlay_cbar = None
 
         def _redraw(self):
-            self.ax_raw.clear() #clean axes to prevent buildup.
             self.ax_count.clear() #clean axes to prevent buildup.
             self._remove_colourbars()
 
             if self.dem is None: #if no DEM given, show blank DEM message.
-                self.ax_raw.set_title("No DEM loaded")
                 self.ax_count.set_title("No DEM loaded")
-                self.ax_raw.set_xticks([])
-                self.ax_raw.set_yticks([])
                 self.ax_count.set_xticks([])
                 self.ax_count.set_yticks([])
                 self.canvas.draw_idle()
@@ -206,39 +182,12 @@ def start_gui(run_program): #entry point for the program.
             show(
                 self.dem,
                 transform=self.dem_transform,
-                ax=self.ax_raw,
-                cmap="terrain"
-            )  #render DEM base image.
-
-            show(
-                self.dem,
-                transform=self.dem_transform,
                 ax=self.ax_count,
                 cmap="terrain"
             )  #render DEM base image.
 
-            self.ax_raw.set_title("Raw sector overlays")
             self.ax_count.set_title("Frequency count heatmap")
 
-            if self.raw_overlay is not None and self.show_overlay.get(): #if an overlay exists for raw count and overlays are enabled.
-                raw_overlay = np.ma.masked_where(self.raw_overlay == 0, self.raw_overlay) #only display cells belonging to sector shapes.
-
-                show(
-                    raw_overlay,
-                    transform=self.dem_transform,
-                    ax=self.ax_raw,
-                    cmap=ListedColormap(["blue"]),
-                    alpha=0.85,
-                    zorder=20,
-                    vmin=1,
-                    vmax=1
-                )  #render DEM base image with raw_overlay on top.
-
-                self.raw_overlay_im = self.ax_raw.images[-1] #save reference to overlay.
-                self.raw_overlay_cbar = None #do not display a colourbar as it is unnecessary.
-
-            else:
-                self.raw_overlay_im = None #flag that no image is currently displaying.
 
             if self.count_overlay is not None and self.show_overlay.get(): #if an overlay exists for visibility count and overlays are enabled.
                 count_overlay = np.ma.masked_where(self.count_overlay == 0, self.count_overlay)
@@ -246,15 +195,15 @@ def start_gui(run_program): #entry point for the program.
                 count_vmax = int(np.max(self.count_overlay)) if np.any(self.count_overlay > 0) else 1 #find biggest count to scale colourbar,
 
                 colours = [
-                    "navy",
-                    "blue",
-                    "deepskyblue",
-                    "cyan",
-                    "limegreen",
-                    "yellowgreen",
                     "yellow",
                     "orange",
                     "red",
+                    "navy",
+                    "yellowgreen",
+                    "blue",
+                    "cyan",
+                    "deepskyblue",
+                    "limegreen",
                     "darkred"
                 ] #define one colour for each possible sighting count from 1 to 10.
 
@@ -287,23 +236,18 @@ def start_gui(run_program): #entry point for the program.
                 xs = [x for x, _ in self.observer_points_xy]
                 ys = [y for _, y in self.observer_points_xy]
 
-                self.ax_raw.scatter(xs, ys, marker="x", s=80, linewidths=2, color="white", zorder=30) #
                 self.ax_count.scatter(xs, ys, marker="x", s=80, linewidths=2, color="white", zorder=30) #
 
-            self.ax_raw.set_xlabel("Easting (m)")
-            self.ax_raw.set_ylabel("Northing (m)")
+
             self.ax_count.set_xlabel("Easting (m)")
             self.ax_count.set_ylabel("Northing (m)")
 
             if self.view_xlim is not None and self.view_ylim is not None:
-                self.ax_raw.set_xlim(self.view_xlim)
-                self.ax_raw.set_ylim(self.view_ylim) #redraw zoom based on saved information. 
+
                 self.ax_count.set_xlim(self.view_xlim)
                 self.ax_count.set_ylim(self.view_ylim) #redraw zoom based on saved information. 
             elif self.view_extent is not None:
                 left, right, bottom, top = self.view_extent
-                self.ax_raw.set_xlim(left, right)
-                self.ax_raw.set_ylim(bottom, top) #redraw zoom based on saved information. 
                 self.ax_count.set_xlim(left, right)
                 self.ax_count.set_ylim(bottom, top) #redraw zoom based on saved information. 
 
@@ -562,7 +506,6 @@ def start_gui(run_program): #entry point for the program.
                 ) #run the main program with the three values on the embedded axes.
 
                 right_sidebar.set_results(
-                    result["raw_overlay"],
                     result["count_overlay"],
                     observer_points=result["observer_points_xy"],
                     view_extent=result["view_extent"]

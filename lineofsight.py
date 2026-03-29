@@ -17,20 +17,17 @@ def cell_centre(affine: Affine, r: int, c: int): #compute centre of cell.
     return E, N
 
 
-def aggregate_line_of_sight(raw_mask, count_mask, E0, N0, dem, src, affine, observer_height,
-                        square_size_m=100, n_rays=360, heading_deg=None, fan_angle_deg=360.0):
+def aggregate_line_of_sight(count_mask, E0, N0, dem, src, affine, observer_height,
+                        square_size_m=100, n_rays=720, heading_deg=None, fan_angle_deg=360.0):
 
         hits = cast_rays_360(E0, N0, square_size_m=square_size_m, n_rays=n_rays, affine=affine, heading_deg=heading_deg,
         fan_angle_deg=fan_angle_deg) #cast rays.
-        raw_this_view = np.zeros_like(raw_mask, dtype=bool) #a mask with exactly the same function as raw_mask, just temporary.
         seen_this_view = np.zeros_like(count_mask, dtype=bool) #a mask with exactly the same function as count_mask, just temporary.
         for (Eh, Nh) in hits: #for the length of each ray.
             cells = list(cells_crossed(affine, src.width, src.height, E0, N0, Eh, Nh)) #compute which cells were passed through.
             if not cells: #in case none were found, skip this ray.
                 continue
 
-            for (r, c) in cells:
-                raw_this_view[r, c] = True #if cell lies anywhere inside the swept sector, mark it in the raw overlay.
 
             visible = line_of_sight(
             cells,
@@ -46,9 +43,8 @@ def aggregate_line_of_sight(raw_mask, count_mask, E0, N0, dem, src, affine, obse
                 if is_visible:
                     seen_this_view[r, c] = True #if cell is seen at all, mark it as visible.
 
-        raw_mask[raw_this_view] += 1 #increment 1 to the cells that lay anywhere inside the sector footprint, irrespective of whether it is visible or not.
         count_mask[seen_this_view] += 1 #increment 1 to the cells that were seen at all (note: only 1 is added to avoid overcounting from distinct rays intersecting the same cell).
-        return raw_mask, count_mask
+        return count_mask
 
 def line_of_sight(
     cells: Iterable[Tuple[int, int]],

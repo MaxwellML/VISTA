@@ -59,14 +59,12 @@ def run_program(sample_metadata, tif_path, ax=None, show_reference=False):
                     for sample in projected_samples
                 ] #as this is a proof of concept, camera yaw will be artificially altered to simulate variation in heading between images.
 
-        raw_overlay = np.zeros(dem.shape, dtype=np.int32) #create a mask the same size as the DEM storing raw sector footprint data on each cell.
         count_mask = np.zeros(dem.shape, dtype=np.int32) #create a mask the same size as the DEM storing visibility data on each cell.
 
         L_region = 1000.0 #define the width of the square region inside which each sector is cast.
 
         for sample in perturbed_samples:
             aggregate_line_of_sight(
-                raw_overlay,
                 count_mask,
                 sample["x_coord"],
                 sample["y_coord"],
@@ -90,7 +88,6 @@ def run_program(sample_metadata, tif_path, ax=None, show_reference=False):
         top = min(src.bounds.top, max(ys) + half_region) #define a viewing region containing the observer points.
 
         return {
-            "raw_overlay": raw_overlay,
             "count_overlay": count_mask,
             "observer_points_xy": observer_points_xy,
             "view_extent": (left, right, bottom, top),
