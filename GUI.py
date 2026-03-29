@@ -11,6 +11,10 @@ from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
 from pyproj import Transformer
 import csv
+from matplotlib.colors import ListedColormap
+import matplotlib.pyplot as plt
+from matplotlib.colors import BoundaryNorm, ListedColormap
+
 
 tif_path = None #file to be loaded from.
 metadata_csv_path = None #file containing sample metadata.
@@ -81,7 +85,8 @@ def start_gui(run_program): #entry point for the program.
             self.count_overlay_cbar = None #default to no colour bar.
 
             self.view_xlim = None
-            self.view_ylim = None #store information about current zoom so it isn't lost on refresh.
+            self.view_ylim = None #store information about current manual zoom so it isn't lost on refresh.
+            self.view_extent = None #store automatic zoom calculated by programw for the current result.
 
             menubar = tk.Menu(parent) #create menu for the window in the top bar...
             parent.config(menu=menubar) #...and attach it.
@@ -138,20 +143,18 @@ def start_gui(run_program): #entry point for the program.
             self.observer_points_xy = []
             self._redraw()
 
-        def set_results(self, raw_overlay, count_overlay, observer_points=None):
+        def set_results(self, raw_overlay, count_overlay, observer_points=None, view_extent=None):
             if self.dem is None:
                 raise ValueError("Load a DEM before setting an overlay.") #check a DEM file is present.
-
-            if raw_overlay.shape != self.dem.shape:
-                raise ValueError("Overlay mask must have the same shape as the DEM.")
-
-            if count_overlay.shape != self.dem.shape:
-                raise ValueError("Overlay mask must have the same shape as the DEM.")
 
             self.raw_overlay = raw_overlay #store DEM LoS render.
             self.count_overlay = count_overlay #store DEM LoS render.
             self.observer_points_xy = observer_points if observer_points is not None else [] #store observer coordinates.
+            self.view_extent = view_extent #store automatic zoom for the current result.
+            self.view_xlim = None
+            self.view_ylim = None #reset manual zoom so a fresh submit uses the program's automatic zoom.
             self._redraw() #render.
+
 
         def toggle_overlay(self): #toggle overlay on/off.
             show = self.show_overlay.get() #retrieve current toggle state.
@@ -217,53 +220,64 @@ def start_gui(run_program): #entry point for the program.
             self.ax_raw.set_title("Raw sector overlays")
             self.ax_count.set_title("Frequency count heatmap")
 
-            if self.raw_overlay is not None and self.show_overlay.get():
-                raw_overlay = np.ma.masked_where(self.raw_overlay == 0, self.raw_overlay)
-
-                raw_vmax = float(np.max(self.raw_overlay)) if np.any(self.raw_overlay > 0) else 1.0
+            if self.raw_overlay is not None and self.show_overlay.get(): #if an overlay exists for raw count and overlays are enabled.
+                raw_overlay = np.ma.masked_where(self.raw_overlay == 0, self.raw_overlay) #only display cells belonging to sector shapes.
 
                 show(
                     raw_overlay,
                     transform=self.dem_transform,
                     ax=self.ax_raw,
-                    cmap="bwr",
-                    alpha=0.70,
+                    cmap=ListedColormap(["blue"]),
+                    alpha=0.85,
                     zorder=20,
                     vmin=1,
-                    vmax=raw_vmax
-                )  #render DEM base image.
+                    vmax=1
+                )  #render DEM base image with raw_overlay on top.
 
-                self.raw_overlay_im = self.ax_raw.images[-1]
-                self.raw_overlay_cbar = self.fig.colorbar(
-                    self.raw_overlay_im,
-                    ax=self.ax_raw,
-                    label="Sector overlap"
-                )
+                self.raw_overlay_im = self.ax_raw.images[-1] #save reference to overlay.
+                self.raw_overlay_cbar = None #do not display a colourbar as it is unnecessary.
 
             else:
-                self.raw_overlay_im = None
+                self.raw_overlay_im = None #flag that no image is currently displaying.
 
-            if self.count_overlay is not None and self.show_overlay.get():
+            if self.count_overlay is not None and self.show_overlay.get(): #if an overlay exists for visibility count and overlays are enabled.
                 count_overlay = np.ma.masked_where(self.count_overlay == 0, self.count_overlay)
 
-                count_vmax = float(np.max(self.count_overlay)) if np.any(self.count_overlay > 0) else 1.0
+                count_vmax = int(np.max(self.count_overlay)) if np.any(self.count_overlay > 0) else 1 #find biggest count to scale colourbar,
+
+                colours = [
+                    "navy",
+                    "blue",
+                    "deepskyblue",
+                    "cyan",
+                    "limegreen",
+                    "yellowgreen",
+                    "yellow",
+                    "orange",
+                    "red",
+                    "darkred"
+                ] #define one colour for each possible sighting count from 1 to 10.
+
+                discrete_cmap = ListedColormap(colours[:count_vmax]) #keep only as many colours as we actually need.
+                bounds = np.arange(0.5, count_vmax + 1.5, 1) #place each integer count into its own colour band.
+                norm = BoundaryNorm(bounds, discrete_cmap.N) #force integer counts into separate bins.
 
                 show(
                     count_overlay,
                     transform=self.dem_transform,
                     ax=self.ax_count,
-                    cmap="bwr",
+                    cmap=discrete_cmap,
+                    norm=norm,
                     alpha=0.70,
-                    zorder=20,
-                    vmin=1,
-                    vmax=count_vmax
+                    zorder=20
                 )  #render DEM base image.
 
                 self.count_overlay_im = self.ax_count.images[-1]
                 self.count_overlay_cbar = self.fig.colorbar(
                     self.count_overlay_im,
                     ax=self.ax_count,
-                    label="Number of sightings"
+                    label="Number of sightings",
+                    ticks=np.arange(1, count_vmax + 1)
                 )
 
             else:
@@ -286,6 +300,12 @@ def start_gui(run_program): #entry point for the program.
                 self.ax_raw.set_ylim(self.view_ylim) #redraw zoom based on saved information. 
                 self.ax_count.set_xlim(self.view_xlim)
                 self.ax_count.set_ylim(self.view_ylim) #redraw zoom based on saved information. 
+            elif self.view_extent is not None:
+                left, right, bottom, top = self.view_extent
+                self.ax_raw.set_xlim(left, right)
+                self.ax_raw.set_ylim(bottom, top) #redraw zoom based on saved information. 
+                self.ax_count.set_xlim(left, right)
+                self.ax_count.set_ylim(bottom, top) #redraw zoom based on saved information. 
 
             self.fig.tight_layout()
             self.canvas.draw_idle()
@@ -518,11 +538,8 @@ def start_gui(run_program): #entry point for the program.
             file_label = ttk.Label(top_bar, textvariable=selected_file_var) #label for currently selected file, or default text if no file loaded.
             file_label.pack(side="left", padx=10) #move to the leftmost side, next to the button.
 
-            metadata_button = ttk.Button(top_bar, text="Metadata CSV", command=load_metadata_file) #create button that runs "load_metadata_file" when clicked.
+            metadata_button = ttk.Button(top_bar, text="CSV", command=load_metadata_file) #create button that runs "load_metadata_file" when clicked.
             metadata_button.pack(side="left", padx=(20, 0)) #move to the leftmost side, next to the file path.
-
-            metadata_title_label = ttk.Label(top_bar, text="Metadata CSV:") #label for metadata CSV path.
-            metadata_title_label.pack(side="left", padx=(12, 4)) #move to the leftmost side, next to the button.
 
             metadata_label = ttk.Label(top_bar, textvariable=selected_metadata_var) #label for currently selected metadata CSV, or default text if no file loaded.
             metadata_label.pack(side="left", padx=10) #move to the leftmost side, next to the button.
@@ -550,9 +567,6 @@ def start_gui(run_program): #entry point for the program.
                     observer_points=result["observer_points_xy"]
                 )
 
-                right_sidebar.view_xlim = right_sidebar.ax_raw.get_xlim() #store current x zoom limit on graph.
-                right_sidebar.view_ylim = right_sidebar.ax_raw.get_ylim() #store current y zoom limit on graph.
-
                 right_sidebar.toggle_overlay() #update preview with current toggle state.
 
                 right_sidebar.canvas.draw_idle() #refresh the embedded preview.
@@ -564,7 +578,7 @@ def start_gui(run_program): #entry point for the program.
    
     global tif_path 
     root = tk.Tk() #create the GUI window.
-    root.title("SeeGULL") #title the window.
+    root.title("VISTA") #title the window.
     root.geometry("1350x760") #default window size.
     root.resizable(True, True) #allow user to resize window.
 

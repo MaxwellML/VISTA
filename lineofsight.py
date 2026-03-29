@@ -18,9 +18,9 @@ def cell_centre(affine: Affine, r: int, c: int): #compute centre of cell.
 
 
 def aggregate_line_of_sight(raw_mask, count_mask, E0, N0, dem, src, affine, observer_height,
-                        square_size_m=100, n_rays=360, bearing_deg=None, fan_angle_deg=360.0):
+                        square_size_m=100, n_rays=360, heading_deg=None, fan_angle_deg=360.0):
 
-        hits = cast_rays_360(E0, N0, square_size_m=square_size_m, n_rays=n_rays, affine=affine, bearing_deg=bearing_deg,
+        hits = cast_rays_360(E0, N0, square_size_m=square_size_m, n_rays=n_rays, affine=affine, heading_deg=heading_deg,
         fan_angle_deg=fan_angle_deg) #cast rays.
         raw_this_view = np.zeros_like(raw_mask, dtype=bool) #a mask with exactly the same function as raw_mask, just temporary.
         seen_this_view = np.zeros_like(count_mask, dtype=bool) #a mask with exactly the same function as count_mask, just temporary.
@@ -46,7 +46,7 @@ def aggregate_line_of_sight(raw_mask, count_mask, E0, N0, dem, src, affine, obse
                 if is_visible:
                     seen_this_view[r, c] = True #if cell is seen at all, mark it as visible.
 
-        raw_mask[raw_this_view] += 1 #increment 1 to the cells that lay anywhere inside the sector footprint.
+        raw_mask[raw_this_view] += 1 #increment 1 to the cells that lay anywhere inside the sector footprint, irrespective of whether it is visible or not.
         count_mask[seen_this_view] += 1 #increment 1 to the cells that were seen at all (note: only 1 is added to avoid overcounting from distinct rays intersecting the same cell).
         return raw_mask, count_mask
 

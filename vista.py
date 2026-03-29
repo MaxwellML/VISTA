@@ -62,7 +62,7 @@ def run_program(sample_metadata, tif_path, ax=None, show_reference=False):
         raw_overlay = np.zeros(dem.shape, dtype=np.int32) #create a mask the same size as the DEM storing raw sector footprint data on each cell.
         count_mask = np.zeros(dem.shape, dtype=np.int32) #create a mask the same size as the DEM storing visibility data on each cell.
 
-        L_region = 100.0 #define the width of the square region inside which each sector is cast.
+        L_region = 1000.0 #define the width of the square region inside which each sector is cast.
 
         for sample in perturbed_samples:
             aggregate_line_of_sight(
@@ -76,12 +76,22 @@ def run_program(sample_metadata, tif_path, ax=None, show_reference=False):
                 observer_height=sample["elevation_m"],
                 square_size_m=L_region,
                 n_rays=121,
-                bearing_deg=sample["heading_deg"],
+                heading_deg=sample["heading_deg"],
                 fan_angle_deg=60.0
             ) #perform LoS algorithm for each image.
+
+        xs = [x for x, _ in observer_points_xy]
+        ys = [y for _, y in observer_points_xy]
+        half_region = L_region / 2
+
+        left = max(src.bounds.left, min(xs) - half_region)
+        right = min(src.bounds.right, max(xs) + half_region)
+        bottom = max(src.bounds.bottom, min(ys) - half_region)
+        top = min(src.bounds.top, max(ys) + half_region) #define a viewing region containing the observer points.
 
         return {
             "raw_overlay": raw_overlay,
             "count_overlay": count_mask,
             "observer_points_xy": observer_points_xy,
+            "view_extent": (left, right, bottom, top),
         }
