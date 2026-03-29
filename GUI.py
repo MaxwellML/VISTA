@@ -564,7 +564,8 @@ def start_gui(run_program): #entry point for the program.
                 right_sidebar.set_results(
                     result["raw_overlay"],
                     result["count_overlay"],
-                    observer_points=result["observer_points_xy"]
+                    observer_points=result["observer_points_xy"],
+                    view_extent=result["view_extent"]
                 )
 
                 right_sidebar.toggle_overlay() #update preview with current toggle state.
