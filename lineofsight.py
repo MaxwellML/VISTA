@@ -155,7 +155,19 @@ def cells_crossed(
         elif tMaxY + eps < tMaxX: #if we will hit a vertical boundary first, move into neighbouring row.
             r += step_r
             tMaxY += tDeltaY
-        else: #if we will hit a corner, move into diagonally neighbouring square.
+        else: #if we will hit a corner.
+            next_c = c + step_c
+            next_r = r + step_r
+
+            # include the horizontal neighbour
+            if 0 <= r < height and 0 <= next_c < width:
+                yield (r, next_c)
+
+            # include the vertical neighbour
+            if 0 <= next_r < height and 0 <= c < width:
+                yield (next_r, c)
+            
+            #move into diagonally neighbouring square.
             c += step_c
             r += step_r
             tMaxX += tDeltaX

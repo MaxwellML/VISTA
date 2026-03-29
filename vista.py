@@ -87,6 +87,11 @@ def run_program(sample_metadata, tif_path, ax=None, show_reference=False):
         bottom = max(src.bounds.bottom, min(ys) - half_region)
         top = min(src.bounds.top, max(ys) + half_region) #define a viewing region containing the observer points.
 
+
+        vals, freqs = np.unique(count_mask[count_mask > 0], return_counts=True)
+        print("count frequencies:", dict(zip(vals.tolist(), freqs.tolist())))
+        print("max count =", count_mask.max())
+
         return {
             "count_overlay": count_mask,
             "observer_points_xy": observer_points_xy,

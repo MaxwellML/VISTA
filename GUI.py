@@ -196,11 +196,11 @@ def start_gui(run_program): #entry point for the program.
 
                 colours = [
                     "yellow",
-                    "orange",
+                    "blue",
                     "red",
                     "navy",
                     "yellowgreen",
-                    "blue",
+                    "orange",
                     "cyan",
                     "deepskyblue",
                     "limegreen",
@@ -217,7 +217,7 @@ def start_gui(run_program): #entry point for the program.
                     ax=self.ax_count,
                     cmap=discrete_cmap,
                     norm=norm,
-                    alpha=0.70,
+                    alpha=1.0,
                     zorder=20
                 )  #render DEM base image.
 
