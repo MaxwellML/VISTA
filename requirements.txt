@@ -10,3 +10,5 @@ scikit-learn
 geopandas
 osmnx
 lark
+pillow
+PySide6
