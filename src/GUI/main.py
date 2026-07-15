@@ -1,26 +1,28 @@
 # GUI/__main__.py
 
 import sys
+from datetime import datetime, timezone
 
 from PySide6.QtWidgets import QApplication
-from datetime import datetime, timezone
-from gui.main_window import MainWindow
-from modules.botanical_suitability_field import (
+from dateutil.relativedelta import relativedelta
+from .main_window import MainWindow
+from SOE.botanical_suitability_field import (
     build_botanical_suitability_field,
 )
-from modules.obstacle_occlusion_field import (
+from SOE.obstacle_occlusion_field import (
     build_obstacle_occlusion_field,
 )
-from modules.visibility_field import build_visibility_field
-
+from SOE.visibility_field import build_visibility_field
 
 def main() -> int:
     app = QApplication(sys.argv)
 
     # These must eventually come from GUI controls or loaded project data.
-    target_geometry = load_target_geometry()
+    target_geometry = None
     observer_geometry = None
     
+    now = datetime.now(timezone.utc)
+
     time_to = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
     time_from = (now - relativedelta(months=1)).isoformat(timespec="seconds").replace("+00:00", "Z")

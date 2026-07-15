@@ -1,15 +1,14 @@
 {
-  "version": "0.2.0",
-  "configurations": [
-    {"name":"Python Debugger: Current File","type":"debugpy","request":"launch","program":"${file}","console":"integratedTerminal"},{
-      "name": "Debug Rivelero GUI",
-      "type": "debugpy",
-      "request": "launch",
-      "module": "soe.main",
-      "cwd": "${workspaceFolder}/src",
-      "console": "integratedTerminal",
-      "justMyCode": true
-      "stopOnEntry" : true
-    }
-  ]
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug Rivelero GUI",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "GUI.main",
+            "cwd": "${workspaceFolder}/src",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        }
+    ]
 }

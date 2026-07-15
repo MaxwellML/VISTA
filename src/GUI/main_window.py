@@ -17,7 +17,9 @@ There are deliberately no candidate-viewpoint controls in this version.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 from PySide6.QtCore import QThreadPool, Qt
@@ -41,12 +43,49 @@ from PySide6.QtWidgets import (
 
 
 from .raster_view import (
-    RasterResult,
+    DynamicRasterView,
     RasterView,
     coerce_raster_result,
-    read_raster_result,
+    write_raster_crop,
 )
 from .worker import FunctionWorker
+
+
+@dataclass(frozen=True, slots=True)
+class CroppedModuleOutput:
+    """Backend result plus the georeferencing of its temporary DEM crop."""
+
+    value: object
+    transform: Any
+    crs: Any
+
+
+def run_module_on_visible_dem_crop(
+    runner,
+    *,
+    source_dem_path: str | Path,
+    visible_bounds: tuple[float, float, float, float],
+    runner_kwargs: dict[str, Any],
+) -> CroppedModuleOutput:
+    """Crop the current DEM view, then run one backend on that crop."""
+
+    with TemporaryDirectory(prefix="rivelero-dem-crop-") as directory:
+        crop = write_raster_crop(
+            source_path=source_dem_path,
+            bounds=visible_bounds,
+            output_path=Path(directory) / "visible_dem.tif",
+        )
+
+        arguments = dict(runner_kwargs)
+        arguments["dem_path"] = crop.path
+        value = runner(**arguments)
+
+        return CroppedModuleOutput(
+            value=value,
+            transform=crop.transform,
+            crs=crop.crs,
+        )
+
 
 class MainWindow(QMainWindow):
     """Rivelero window containing DEM, LoS and NDVI views."""
@@ -208,7 +247,19 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
 
-        self.dem_view = RasterView("DEM preview will show here.")
+        self.dem_view = DynamicRasterView("DEM preview will show here.")
+        self.dem_view.area_selection_started.connect(
+            self._on_area_selection_started
+        )
+        self.dem_view.area_selected.connect(
+            self._receive_selected_area
+        )
+        self.dem_view.area_selection_cleared.connect(
+            self._on_area_selection_cleared
+        )
+        self.dem_view.area_selection_error.connect(
+            self._show_area_selection_error
+        )
 
         self.los_view = RasterView("Run the LoS module to show a result.")
         self.ndvi_view = RasterView("Run the NDVI module to show a result.")
@@ -220,6 +271,55 @@ class MainWindow(QMainWindow):
 
         outer_layout.addWidget(self.left_panel)
         outer_layout.addWidget(self.workspace, 1)
+
+    def _on_area_selection_started(self) -> None:
+        """Discard the old target before the replacement is drawn."""
+
+        self.target_geometry = None
+        self.tabs.setCurrentWidget(self.dem_view)
+        self.status_label.setText(
+            "Previous target cleared. Click points on the DEM to draw its "
+            "replacement, then click the first point again to finish."
+        )
+        self._update_controls()
+
+    def _on_area_selection_cleared(self) -> None:
+        """Clear the stored target geometry as well as its visible patch."""
+
+        self.target_geometry = None
+        self.status_label.setText("Target region cleared.")
+        self._update_controls()
+
+    def _show_area_selection_error(self, message: str) -> None:
+        """Show an error raised while activating polygon selection."""
+
+        QMessageBox.warning(
+            self,
+            "Area selection unavailable",
+            message,
+        )
+
+    def _receive_selected_area(
+        self,
+        vertices: list[tuple[float, float]],
+    ) -> None:
+        """Store the selected polygon as GeoJSON-like geometry."""
+
+        self.target_geometry = {
+            "type": "Polygon",
+            "coordinates": [
+                [
+                    [x, y]
+                    for x, y in vertices
+                ]
+            ],
+        }
+
+        self.status_label.setText(
+            f"Target region selected with {len(vertices) - 1} vertices."
+        )
+
+        self._update_controls()
 
     def choose_dem(self) -> None:
         """Ask the user for a local GeoTIFF and show its first band."""
@@ -235,8 +335,11 @@ class MainWindow(QMainWindow):
 
         path = Path(filename)
 
+        self.dem_view.clear_selected_area()
+        self.target_geometry = None
+
         try:
-            result = read_raster_result(
+            self.dem_view.open_raster(
                 path,
                 title="DEM preview",
                 colour_map="terrain",
@@ -250,12 +353,12 @@ class MainWindow(QMainWindow):
             return
 
         self.dem_path = path
-        self.dem_transform = result.transform
-        self.dem_crs = result.crs
+        self.dem_transform = self.dem_view.source_transform
+        self.dem_crs = self.dem_view.source_crs
+ 
 
         self.dem_path_label.setText(str(path))
         self.dem_path_label.setToolTip(str(path))
-        self.dem_view.show_result(result)
         self.tabs.setCurrentWidget(self.dem_view)
         self.status_label.setText("DEM loaded. Choose a module to run.")
         self._update_controls()
@@ -280,13 +383,14 @@ class MainWindow(QMainWindow):
             runner=self.visibility_runner,
             destination=self.los_view,
             runner_kwargs={
-                "dem_path": self.dem_path,
                 "target_geometry": self.target_geometry,
                 "observer_geometry": self.observer_geometry,
             },
             default_title="3D visibility field",
             default_colour_map="viridis",
             default_colourbar_label="Visibility field height",
+            display_mode="surface",
+            surface_colour_map="Wistia",
         )
 
     def run_botanical(self) -> None:
@@ -309,7 +413,6 @@ class MainWindow(QMainWindow):
             runner=self.botanical_runner,
             destination=self.ndvi_view,
             runner_kwargs={
-                "dem_path": self.dem_path,
                 "target_geometry": self.target_geometry,
                 "time_from": self.time_from,
                 "time_to": self.time_to,
@@ -331,7 +434,6 @@ class MainWindow(QMainWindow):
             runner=self.obstacle_runner,
             destination=self.obstacle_view,
             runner_kwargs={
-                "dem_path": self.dem_path,
                 "field_geometry": self.observer_geometry,
             },
             default_title="Obstacle occlusion field",
@@ -349,12 +451,26 @@ class MainWindow(QMainWindow):
         default_title: str,
         default_colour_map: str,
         default_colourbar_label: str,
+        display_mode: str = "raster",
+        surface_colour_map: str | None = None,
     ) -> None:
         if self.dem_path is None:
             self._show_missing_dem()
             return
 
-        worker = FunctionWorker(runner, **runner_kwargs,) #package the function and DEM.
+        try:
+            visible_bounds = self.dem_view.current_visible_bounds()
+        except RuntimeError as error:
+            self._show_error("DEM crop unavailable", str(error))
+            return
+
+        worker = FunctionWorker(
+            run_module_on_visible_dem_crop,
+            runner,
+            source_dem_path=self.dem_path,
+            visible_bounds=visible_bounds,
+            runner_kwargs=runner_kwargs,
+        )
         self._workers.add(worker) #add worker to list of current workers.
 
         worker.signals.result.connect(
@@ -365,6 +481,8 @@ class MainWindow(QMainWindow):
                 default_title=default_title,
                 default_colour_map=default_colour_map,
                 default_colourbar_label=default_colourbar_label,
+                display_mode=display_mode,
+                surface_colour_map=surface_colour_map,
             )
         ) #when a successful result is available, return it.
         worker.signals.error.connect(self._receive_worker_error) #if there is an error, report it.
@@ -372,7 +490,7 @@ class MainWindow(QMainWindow):
             lambda: self._finish_worker(worker)
         ) #when a worker is finished, cleanup.
 
-        self.status_label.setText(f"Running {name}…")
+        self.status_label.setText(f"Cropping visible DEM and running {name}…")
         self.progress_bar.setRange(0, 0) #display "busy" bar.
         self._update_controls()
         self.thread_pool.start(worker)
@@ -386,18 +504,35 @@ class MainWindow(QMainWindow):
         default_title: str,
         default_colour_map: str,
         default_colourbar_label: str,
+        display_mode: str,
+        surface_colour_map: str | None,
     ) -> None:
         try:
+            fallback_transform = self.dem_transform
+            fallback_crs = self.dem_crs
+
+            if isinstance(raw_result, CroppedModuleOutput):
+                fallback_transform = raw_result.transform
+                fallback_crs = raw_result.crs
+                raw_result = raw_result.value
+
             result = coerce_raster_result(
                 raw_result,
                 default_title=default_title,
                 default_colour_map=default_colour_map,
                 default_colourbar_label=default_colourbar_label,
-                fallback_transform=self.dem_transform,
-                fallback_crs=self.dem_crs,
-            ) 
-            destination.show_result(result)
-            
+                fallback_transform=fallback_transform,
+                fallback_crs=fallback_crs,
+            )
+
+            if display_mode == "surface":
+                destination.show_surface(
+                    result,
+                    colour_map=surface_colour_map,
+                )
+            else:
+                destination.show_result(result)
+
             if self.tabs.indexOf(destination) == -1:
                 self.tabs.addTab(destination, name)
 
@@ -410,7 +545,12 @@ class MainWindow(QMainWindow):
             return
 
         self.tabs.setCurrentWidget(destination)
-        self.status_label.setText(f"{name} complete.")
+        if display_mode == "surface":
+            self.status_label.setText(
+                f"{name} complete. Drag the 3D field to rotate it."
+            )
+        else:
+            self.status_label.setText(f"{name} complete.")
 
     def _receive_worker_error(
         self,
@@ -452,6 +592,10 @@ class MainWindow(QMainWindow):
         )
 
         self.run_obstacle_button.setEnabled(
+            has_dem and not is_busy
+        )
+
+        self.dem_view.set_area_selection_enabled(
             has_dem and not is_busy
         )
 
