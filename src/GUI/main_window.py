@@ -1,22 +1,19 @@
-"""
-Main PySide6 window for the first Rivelero GUI version.
+"""Main PySide6 window for the Rivelero GUI.
 
-Expected backend functions
---------------------------
-The two imports below assume these functions already exist:
+The user selects one or more component modules, then presses one submit button.
+A single background worker:
 
-    modules.los.run_los(dem_path)
-    modules.ndvi.run_ndvi(dem_path)
+1. crops the currently visible DEM once;
+2. runs each selected component module in sequence;
+3. passes the returned component results into the OPF runner; and
+4. returns both the component results and the combined OPF to the GUI.
 
-Each function may return any format accepted by
-``gui.raster_view.coerce_raster_result``. Returning ``RasterResult`` is the
-cleanest option.
-
-There are deliberately no candidate-viewpoint controls in this version.
+The component fields and the observability potential field are displayed in tabs.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -25,6 +22,7 @@ from typing import Any
 from PySide6.QtCore import QThreadPool, Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFileDialog,
     QFrame,
     QGroupBox,
@@ -40,8 +38,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-
-
 from .raster_view import (
     DynamicRasterView,
     RasterView,
@@ -51,23 +47,39 @@ from .raster_view import (
 from .worker import FunctionWorker
 
 
-@dataclass(frozen=True, slots=True)
-class CroppedModuleOutput:
-    """Backend result plus the georeferencing of its temporary DEM crop."""
+ModuleRunner = Callable[..., object]
+SelectedModules = dict[
+    str,
+    tuple[ModuleRunner, dict[str, Any]],
+]
 
-    value: object
+
+@dataclass(frozen=True, slots=True)
+class PipelineOutput:
+    """All results returned by one submitted Rivelero pipeline."""
+
+    component_results: dict[str, object]
+    opf_result: object
     transform: Any
     crs: Any
 
 
-def run_module_on_visible_dem_crop(
-    runner,
+def run_selected_pipeline_on_visible_dem_crop(
     *,
     source_dem_path: str | Path,
     visible_bounds: tuple[float, float, float, float],
-    runner_kwargs: dict[str, Any],
-) -> CroppedModuleOutput:
-    """Crop the current DEM view, then run one backend on that crop."""
+    selected_modules: SelectedModules,
+    opf_runner: ModuleRunner,
+) -> PipelineOutput:
+    """Run the selected modules and OPF on one shared temporary DEM crop.
+
+    This function is executed by one ``FunctionWorker``. Each component runner
+    is called synchronously inside that worker, so the next runner starts only
+    after the previous runner has returned. The GUI thread remains responsive.
+    """
+
+    if not selected_modules:
+        raise ValueError("At least one component module must be selected.")
 
     with TemporaryDirectory(prefix="rivelero-dem-crop-") as directory:
         crop = write_raster_crop(
@@ -76,25 +88,37 @@ def run_module_on_visible_dem_crop(
             output_path=Path(directory) / "visible_dem.tif",
         )
 
-        arguments = dict(runner_kwargs)
-        arguments["dem_path"] = crop.path
-        value = runner(**arguments)
+        component_results: dict[str, object] = {}
 
-        return CroppedModuleOutput(
-            value=value,
+        for module_name, (runner, runner_kwargs) in selected_modules.items():
+            arguments = dict(runner_kwargs)
+            arguments["dem_path"] = crop.path
+            component_results[module_name] = runner(**arguments)
+
+        opf_result = opf_runner(
+            visibility_result=component_results.get("visibility"),
+            botanical_result=component_results.get("botanical"),
+            occlusion_result=component_results.get("occlusion"),
+        )
+
+        return PipelineOutput(
+            component_results=component_results,
+            opf_result=opf_result,
             transform=crop.transform,
             crs=crop.crs,
         )
 
 
+
 class MainWindow(QMainWindow):
-    """Rivelero window containing DEM, LoS and NDVI views."""
+    """Rivelero window containing the DEM and component-result views."""
 
     def __init__(
         self,
-        visibility_runner,
-        botanical_runner,
-        obstacle_runner,
+        visibility_runner: ModuleRunner,
+        botanical_runner: ModuleRunner,
+        obstacle_runner: ModuleRunner,
+        opf_runner: ModuleRunner | None = None,
         *,
         target_geometry: object | None = None,
         observer_geometry: object | None = None,
@@ -106,10 +130,10 @@ class MainWindow(QMainWindow):
         self.visibility_runner = visibility_runner
         self.botanical_runner = botanical_runner
         self.obstacle_runner = obstacle_runner
+        self.opf_runner = opf_runner
 
         self.target_geometry = target_geometry
         self.observer_geometry = observer_geometry
-
         self.time_from = time_from
         self.time_to = time_to
 
@@ -117,19 +141,27 @@ class MainWindow(QMainWindow):
         self.dem_transform: Any | None = None
         self.dem_crs: Any | None = None
 
-        self.thread_pool = QThreadPool.globalInstance() #store reference to Qt's threadpool to stop heavy computation from blocking the interface.
-        self._workers: set[FunctionWorker] = set() #store current workers.
+        # Exact, full-resolution backend results from the latest submission.
+        self.visibility_result: object | None = None
+        self.botanical_result: object | None = None
+        self.occlusion_result: object | None = None
+        self.opf_result: object | None = None
+
+        self.thread_pool = QThreadPool.globalInstance()
+        self._workers: set[FunctionWorker] = set()
 
         self.setWindowTitle("Rivelero")
         self.resize(1250, 780)
         self.setMinimumSize(900, 600)
 
-        self._build_menu() #create a file menu.
+        self._build_menu()
         self._build_interface()
         self._apply_styles()
         self._update_controls()
 
     def _build_menu(self) -> None:
+        """Create the File menu."""
+
         file_menu = self.menuBar().addMenu("&File")
 
         open_action = QAction("Open DEM…", self)
@@ -145,6 +177,8 @@ class MainWindow(QMainWindow):
         file_menu.addAction(exit_action)
 
     def _build_interface(self) -> None:
+        """Construct the main window widgets and layouts."""
+
         central_widget = QWidget()
         central_widget.setObjectName("centralWidget")
         self.setCentralWidget(central_widget)
@@ -195,33 +229,34 @@ class MainWindow(QMainWindow):
         module_group = QGroupBox("Modules")
         module_layout = QVBoxLayout(module_group)
 
-
-        # Geometric Visibility sub-box
         geometric_group = QGroupBox("Geometric Visibility")
         geometric_layout = QVBoxLayout(geometric_group)
 
-        self.run_los_button = QPushButton("Line of sight")
-        self.run_los_button.clicked.connect(self.run_los)
+        self.los_checkbox = QCheckBox("Line of sight")
+        self.obstacle_checkbox = QCheckBox("Obstacle occlusion")
+        geometric_layout.addWidget(self.los_checkbox)
+        geometric_layout.addWidget(self.obstacle_checkbox)
 
-        self.run_obstacle_button = QPushButton("Obstacle occlusion")
-        self.run_obstacle_button.clicked.connect(self.run_obstacle)
-
-        geometric_layout.addWidget(self.run_los_button)
-        geometric_layout.addWidget(self.run_obstacle_button)
-
-        # Botanical Suitability sub-box
         botanical_group = QGroupBox("Botanical Suitability")
         botanical_layout = QVBoxLayout(botanical_group)
 
-        self.run_ndvi_button = QPushButton("NDVI")
-        self.run_ndvi_button.clicked.connect(self.run_botanical)
+        self.ndvi_checkbox = QCheckBox("NDVI")
+        botanical_layout.addWidget(self.ndvi_checkbox)
 
-        botanical_layout.addWidget(self.run_ndvi_button)
+        self.los_checkbox.setChecked(True)
+        self.ndvi_checkbox.setChecked(True)
+        self.obstacle_checkbox.setChecked(True)
 
-
-        # Put both sub-boxes inside the outer Modules box
         module_layout.addWidget(geometric_group)
         module_layout.addWidget(botanical_group)
+
+        self.run_selected_button = QPushButton("Run selected modules")
+        self.run_selected_button.clicked.connect(self.run_selected_modules)
+        module_layout.addWidget(self.run_selected_button)
+
+        self.los_checkbox.toggled.connect(self._update_controls)
+        self.ndvi_checkbox.toggled.connect(self._update_controls)
+        self.obstacle_checkbox.toggled.connect(self._update_controls)
 
         left_layout.addWidget(module_group)
 
@@ -251,9 +286,7 @@ class MainWindow(QMainWindow):
         self.dem_view.area_selection_started.connect(
             self._on_area_selection_started
         )
-        self.dem_view.area_selected.connect(
-            self._receive_selected_area
-        )
+        self.dem_view.area_selected.connect(self._receive_selected_area)
         self.dem_view.area_selection_cleared.connect(
             self._on_area_selection_cleared
         )
@@ -263,17 +296,21 @@ class MainWindow(QMainWindow):
 
         self.los_view = RasterView("Run the LoS module to show a result.")
         self.ndvi_view = RasterView("Run the NDVI module to show a result.")
-        self.obstacle_view = RasterView("Run the obstacle module to show a result.")
+        self.obstacle_view = RasterView(
+            "Run the obstacle module to show a result."
+        )
+        self.opf_view = RasterView(
+            "Run selected modules to show the observability potential field."
+        )
 
         self.tabs.addTab(self.dem_view, "DEM")
-
         workspace_layout.addWidget(self.tabs)
 
         outer_layout.addWidget(self.left_panel)
         outer_layout.addWidget(self.workspace, 1)
 
     def _on_area_selection_started(self) -> None:
-        """Discard the old target before the replacement is drawn."""
+        """Discard the previous target before its replacement is drawn."""
 
         self.target_geometry = None
         self.tabs.setCurrentWidget(self.dem_view)
@@ -284,14 +321,14 @@ class MainWindow(QMainWindow):
         self._update_controls()
 
     def _on_area_selection_cleared(self) -> None:
-        """Clear the stored target geometry as well as its visible patch."""
+        """Clear the stored target geometry and its visible patch."""
 
         self.target_geometry = None
         self.status_label.setText("Target region cleared.")
         self._update_controls()
 
     def _show_area_selection_error(self, message: str) -> None:
-        """Show an error raised while activating polygon selection."""
+        """Display an error raised while activating polygon selection."""
 
         QMessageBox.warning(
             self,
@@ -303,26 +340,23 @@ class MainWindow(QMainWindow):
         self,
         vertices: list[tuple[float, float]],
     ) -> None:
-        """Store the selected polygon as GeoJSON-like geometry."""
+        """Store the selected polygon as a GeoJSON-like geometry."""
 
         self.target_geometry = {
             "type": "Polygon",
             "coordinates": [
-                [
-                    [x, y]
-                    for x, y in vertices
-                ]
+                [[x, y] for x, y in vertices]
             ],
         }
 
         self.status_label.setText(
             f"Target region selected with {len(vertices) - 1} vertices."
         )
-
         self._update_controls()
 
     def choose_dem(self) -> None:
-        """Ask the user for a local GeoTIFF and show its first band."""
+        """Ask the user for a local GeoTIFF and display its first band."""
+
         filename, _ = QFileDialog.getOpenFileName(
             self,
             "Open DEM",
@@ -346,117 +380,112 @@ class MainWindow(QMainWindow):
                 colourbar_label="Elevation",
             )
         except Exception as error:  # noqa: BLE001 - present file errors in GUI
-            self._show_error(
-                "DEM loading failed",
-                str(error),
-            )
+            self._show_error("DEM loading failed", str(error))
             return
 
         self.dem_path = path
         self.dem_transform = self.dem_view.source_transform
         self.dem_crs = self.dem_view.source_crs
- 
+
+        self.visibility_result = None
+        self.botanical_result = None
+        self.occlusion_result = None
+        self.opf_result = None
+
+        self.opf_view.show_message(
+            "Run selected modules to show the observability potential field."
+        )
 
         self.dem_path_label.setText(str(path))
         self.dem_path_label.setToolTip(str(path))
         self.tabs.setCurrentWidget(self.dem_view)
-        self.status_label.setText("DEM loaded. Choose a module to run.")
+        self.status_label.setText("DEM loaded. Choose modules to run.")
         self._update_controls()
 
-    def run_los(self) -> None:
-        """Build the terrain-visibility field."""
+    def run_selected_modules(self) -> None:
+        """Launch one worker for the selected components and the OPF."""
 
         if self.dem_path is None:
             self._show_missing_dem()
             return
 
-        if self.target_geometry is None:
+        run_los = self.los_checkbox.isChecked()
+        run_ndvi = self.ndvi_checkbox.isChecked()
+        run_obstacle = self.obstacle_checkbox.isChecked()
+
+        if not any((run_los, run_ndvi, run_obstacle)):
             QMessageBox.warning(
                 self,
-                "No target region",
-                "Load or define a target region before running visibility.",
+                "No modules selected",
+                "Tick at least one module before submitting.",
             )
             return
 
-        self._start_module(
-            name="Visibility",
-            runner=self.visibility_runner,
-            destination=self.los_view,
-            runner_kwargs={
-                "target_geometry": self.target_geometry,
-                "observer_geometry": self.observer_geometry,
-            },
-            default_title="3D visibility field",
-            default_colour_map="viridis",
-            default_colourbar_label="Visibility field height",
-            display_mode="surface",
-            surface_colour_map="Wistia",
-        )
-
-    def run_botanical(self) -> None:
-        """Build the botanical-suitability field."""
-
-        if self.dem_path is None:
-            self._show_missing_dem()
-            return
-
-        if not self.time_from or not self.time_to:
+        if self.opf_runner is None:
             QMessageBox.warning(
                 self,
-                "No imagery dates",
-                "Select a Sentinel-2 start and end date.",
+                "OPF module unavailable",
+                "No observability-potential-field runner was supplied.",
             )
             return
 
-        self._start_module(
-            name="Botanical suitability",
-            runner=self.botanical_runner,
-            destination=self.ndvi_view,
-            runner_kwargs={
-                "target_geometry": self.target_geometry,
-                "time_from": self.time_from,
-                "time_to": self.time_to,
-            },
-            default_title="Botanical suitability field",
-            default_colour_map="YlGn",
-            default_colourbar_label="Botanical suitability field height",
-        )
+        missing_requirements: list[str] = []
 
-    def run_obstacle(self) -> None:
-        """Build the OpenStreetMap obstacle-occlusion field."""
+        if run_los and self.target_geometry is None:
+            missing_requirements.append(
+                "Line of sight requires a target region."
+            )
 
-        if self.dem_path is None:
-            self._show_missing_dem()
+        if run_ndvi and not (self.time_from and self.time_to):
+            missing_requirements.append(
+                "NDVI requires Sentinel-2 start and end dates."
+            )
+
+        if missing_requirements:
+            QMessageBox.warning(
+                self,
+                "Missing inputs",
+                "\n".join(missing_requirements),
+            )
             return
 
-        self._start_module(
-            name="Obstacle occlusion",
-            runner=self.obstacle_runner,
-            destination=self.obstacle_view,
-            runner_kwargs={
-                "field_geometry": self.observer_geometry,
-            },
-            default_title="Obstacle occlusion field",
-            default_colour_map="magma",
-            default_colourbar_label="Local obstacle coverage",
-        )
+        selected_modules: SelectedModules = {}
+        selected_names: list[str] = []
 
-    def _start_module(
-        self,
-        *,
-        name: str,
-        runner,
-        destination: RasterView,
-        runner_kwargs: dict[str, Any],
-        default_title: str,
-        default_colour_map: str,
-        default_colourbar_label: str,
-        display_mode: str = "raster",
-        surface_colour_map: str | None = None,
-    ) -> None:
-        if self.dem_path is None:
-            self._show_missing_dem()
-            return
+        if run_los:
+            selected_modules["visibility"] = (
+                self.visibility_runner,
+                {
+                    "target_geometry": self.target_geometry,
+                    "observer_geometry": self.observer_geometry,
+                },
+            )
+            selected_names.append("LOS")
+            self.visibility_result = None
+
+        if run_ndvi:
+            selected_modules["botanical"] = (
+                self.botanical_runner,
+                {
+                    "target_geometry": self.target_geometry,
+                    "time_from": self.time_from,
+                    "time_to": self.time_to,
+                },
+            )
+            selected_names.append("NDVI")
+            self.botanical_result = None
+
+        if run_obstacle:
+            selected_modules["occlusion"] = (
+                self.obstacle_runner,
+                {
+                    "field_geometry": self.observer_geometry,
+                },
+            )
+            selected_names.append("obstacles")
+            self.occlusion_result = None
+
+        self.opf_result = None
 
         try:
             visible_bounds = self.dem_view.current_visible_bounds()
@@ -465,35 +494,82 @@ class MainWindow(QMainWindow):
             return
 
         worker = FunctionWorker(
-            run_module_on_visible_dem_crop,
-            runner,
+            run_selected_pipeline_on_visible_dem_crop,
             source_dem_path=self.dem_path,
             visible_bounds=visible_bounds,
-            runner_kwargs=runner_kwargs,
+            selected_modules=selected_modules,
+            opf_runner=self.opf_runner,
         )
-        self._workers.add(worker) #add worker to list of current workers.
+        self._workers.add(worker)
 
-        worker.signals.result.connect(
-            lambda raw_result: self._receive_module_result(
-                name=name,
-                destination=destination,
-                raw_result=raw_result,
-                default_title=default_title,
-                default_colour_map=default_colour_map,
-                default_colourbar_label=default_colourbar_label,
-                display_mode=display_mode,
-                surface_colour_map=surface_colour_map,
-            )
-        ) #when a successful result is available, return it.
-        worker.signals.error.connect(self._receive_worker_error) #if there is an error, report it.
+        worker.signals.result.connect(self._receive_pipeline_result)
+        worker.signals.error.connect(self._receive_worker_error)
         worker.signals.finished.connect(
             lambda: self._finish_worker(worker)
-        ) #when a worker is finished, cleanup.
+        )
 
-        self.status_label.setText(f"Cropping visible DEM and running {name}…")
-        self.progress_bar.setRange(0, 0) #display "busy" bar.
+        self.status_label.setText(
+            "Running " + ", ".join(selected_names) + " and building the OPF…"
+        )
+        self.progress_bar.setRange(0, 0)
         self._update_controls()
         self.thread_pool.start(worker)
+
+    def _receive_pipeline_result(self, output: PipelineOutput) -> None:
+        """Store and display all results from a completed pipeline."""
+
+        results = output.component_results
+
+        if "visibility" in results:
+            self._receive_module_result(
+                name="Visibility",
+                destination=self.los_view,
+                raw_result=results["visibility"],
+                default_title="3D visibility field",
+                default_colour_map="viridis",
+                default_colourbar_label="Visibility field height",
+                result_attribute="visibility_result",
+                display_mode="surface",
+                surface_colour_map="Wistia",
+                fallback_transform=output.transform,
+                fallback_crs=output.crs,
+            )
+
+        if "botanical" in results:
+            self._receive_module_result(
+                name="Botanical suitability",
+                destination=self.ndvi_view,
+                raw_result=results["botanical"],
+                default_title="Botanical suitability field",
+                default_colour_map="YlGn",
+                default_colourbar_label=(
+                    "Botanical suitability field height"
+                ),
+                result_attribute="botanical_result",
+                display_mode="surface",
+                surface_colour_map=None,
+                fallback_transform=output.transform,
+                fallback_crs=output.crs,
+            )
+
+        if "occlusion" in results:
+            self._receive_module_result(
+                name="Obstacle occlusion",
+                destination=self.obstacle_view,
+                raw_result=results["occlusion"],
+                default_title="Obstacle occlusion field",
+                default_colour_map="magma",
+                default_colourbar_label="Local obstacle coverage",
+                result_attribute="occlusion_result",
+                display_mode="surface",
+                surface_colour_map=None,
+                fallback_transform=output.transform,
+                fallback_crs=output.crs,
+            )
+
+        # Component display marks a previous OPF stale, so store/show the newly
+        # calculated OPF only after every component has been processed.
+        self._receive_opf_result(output.opf_result)
 
     def _receive_module_result(
         self,
@@ -504,34 +580,49 @@ class MainWindow(QMainWindow):
         default_title: str,
         default_colour_map: str,
         default_colourbar_label: str,
+        result_attribute: str,
         display_mode: str,
         surface_colour_map: str | None,
+        fallback_transform: Any | None = None,
+        fallback_crs: Any | None = None,
     ) -> None:
+        """Store one component result and display it in its tab."""
+
         try:
-            fallback_transform = self.dem_transform
-            fallback_crs = self.dem_crs
+            if not hasattr(raw_result, "field"):
+                raise TypeError(
+                    f"{name} did not return a result containing a field."
+                )
 
-            if isinstance(raw_result, CroppedModuleOutput):
-                fallback_transform = raw_result.transform
-                fallback_crs = raw_result.crs
-                raw_result = raw_result.value
+            setattr(self, result_attribute, raw_result)
 
-            result = coerce_raster_result(
+            # Until the new pipeline OPF is stored, any previous OPF is stale.
+            self.opf_result = None
+
+            display_result = coerce_raster_result(
                 raw_result,
                 default_title=default_title,
                 default_colour_map=default_colour_map,
                 default_colourbar_label=default_colourbar_label,
-                fallback_transform=fallback_transform,
-                fallback_crs=fallback_crs,
+                fallback_transform=(
+                    fallback_transform
+                    if fallback_transform is not None
+                    else self.dem_transform
+                ),
+                fallback_crs=(
+                    fallback_crs
+                    if fallback_crs is not None
+                    else self.dem_crs
+                ),
             )
 
             if display_mode == "surface":
                 destination.show_surface(
-                    result,
+                    display_result,
                     colour_map=surface_colour_map,
                 )
             else:
-                destination.show_result(result)
+                destination.show_result(display_result)
 
             if self.tabs.indexOf(destination) == -1:
                 self.tabs.addTab(destination, name)
@@ -541,32 +632,73 @@ class MainWindow(QMainWindow):
                 f"{name} result could not be displayed",
                 str(error),
             )
-            self.status_label.setText(f"{name} finished, but display failed.")
+            self.status_label.setText(
+                f"{name} finished, but display failed."
+            )
             return
 
         self.tabs.setCurrentWidget(destination)
-        if display_mode == "surface":
-            self.status_label.setText(
-                f"{name} complete. Drag the 3D field to rotate it."
+        self.status_label.setText(f"{name} complete.")
+
+    def _receive_opf_result(self, raw_result: object) -> None:
+        """Store the combined result and display it in the OPF tab."""
+
+        try:
+            if not hasattr(raw_result, "field"):
+                raise TypeError(
+                    "The OPF runner did not return a result containing a field."
+                )
+
+            self.opf_result = raw_result
+
+            display_result = coerce_raster_result(
+                raw_result,
+                default_title="Observability potential field",
+                default_colour_map="viridis",
+                default_colourbar_label="Observability potential",
+                fallback_transform=self.dem_transform,
+                fallback_crs=self.dem_crs,
             )
-        else:
-            self.status_label.setText(f"{name} complete.")
+
+            self.opf_view.show_surface(display_result)
+
+            if self.tabs.indexOf(self.opf_view) == -1:
+                self.tabs.addTab(self.opf_view, "OPF")
+
+        except Exception as error:  # noqa: BLE001 - show GUI conversion errors
+            self._show_error(
+                "Observability potential field could not be displayed",
+                str(error),
+            )
+            self.status_label.setText(
+                "OPF finished, but its display failed."
+            )
+            return
+
+        self.tabs.setCurrentWidget(self.opf_view)
+        self.status_label.setText(
+            "Observability potential field complete."
+        )
 
     def _receive_worker_error(
         self,
         message: str,
         traceback_text: str,
     ) -> None:
+        """Show an exception raised by the background pipeline worker."""
+
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Critical)
-        box.setWindowTitle("Module failed")
-        box.setText(message or "The module failed.")
+        box.setWindowTitle("Pipeline failed")
+        box.setText(message or "The pipeline failed.")
         box.setDetailedText(traceback_text)
         box.exec()
 
-        self.status_label.setText("Module failed.")
+        self.status_label.setText("Pipeline failed.")
 
     def _finish_worker(self, worker: FunctionWorker) -> None:
+        """Release a completed worker and restore the idle controls."""
+
         self._workers.discard(worker)
 
         if not self._workers:
@@ -575,24 +707,28 @@ class MainWindow(QMainWindow):
 
         self._update_controls()
 
-    def _update_controls(self) -> None:
+    def _update_controls(self, _checked: bool | None = None) -> None:
+        """Enable or disable controls according to the current GUI state."""
+
         is_busy = bool(self._workers)
         has_dem = self.dem_path is not None
-        has_target = self.target_geometry is not None
-        has_dates = bool(self.time_from and self.time_to)
+        any_selected = any(
+            (
+                self.los_checkbox.isChecked(),
+                self.ndvi_checkbox.isChecked(),
+                self.obstacle_checkbox.isChecked(),
+            )
+        )
 
         self.load_dem_button.setEnabled(not is_busy)
 
-        self.run_los_button.setEnabled(
-            has_dem and has_target and not is_busy
-        )
+        checkboxes_enabled = has_dem and not is_busy
+        self.los_checkbox.setEnabled(checkboxes_enabled)
+        self.ndvi_checkbox.setEnabled(checkboxes_enabled)
+        self.obstacle_checkbox.setEnabled(checkboxes_enabled)
 
-        self.run_ndvi_button.setEnabled(
-            has_dem and has_dates and not is_busy
-        )
-
-        self.run_obstacle_button.setEnabled(
-            has_dem and not is_busy
+        self.run_selected_button.setEnabled(
+            has_dem and any_selected and not is_busy
         )
 
         self.dem_view.set_area_selection_enabled(
@@ -600,16 +736,22 @@ class MainWindow(QMainWindow):
         )
 
     def _show_missing_dem(self) -> None:
+        """Tell the user that a DEM must be loaded first."""
+
         QMessageBox.warning(
             self,
             "No DEM selected",
-            "Load a DEM before running a module.",
+            "Load a DEM before running the pipeline.",
         )
 
     def _show_error(self, title: str, message: str) -> None:
+        """Display a critical-error message box."""
+
         QMessageBox.critical(self, title, message)
 
     def _apply_styles(self) -> None:
+        """Apply the application's dark Qt stylesheet."""
+
         self.setStyleSheet(
             """
             QMainWindow,
@@ -650,6 +792,11 @@ class MainWindow(QMainWindow):
                 subcontrol-origin: margin;
                 left: 10px;
                 padding: 0 4px;
+            }
+
+            QCheckBox {
+                spacing: 8px;
+                padding: 4px 2px;
             }
 
             QPushButton {

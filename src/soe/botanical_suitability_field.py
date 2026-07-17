@@ -56,7 +56,8 @@ from pyproj import Transformer
 from rasterio.crs import CRS
 from rasterio.features import geometry_mask
 from rasterio.io import MemoryFile
-from rasterio.warp import Resampling, reproject, transform_bounds
+from rasterio.warp import reproject, transform_bounds
+from rasterio.enums import Resampling
 from rasterio.windows import Window
 from rasterio.windows import bounds as window_bounds
 
@@ -116,37 +117,86 @@ class BotanicalSuitabilityFieldResult:
         """Return the botanical-suitability field heights."""
         return self.field
 
-    @property
-    def botanical_suitability(self) -> np.ndarray:
-        """Descriptive alias for ``field``."""
-        return self.field
 
-    def xyz_mesh(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def surface_grids(
+        self,
+        max_rows: int = 400,
+        max_columns: int = 400,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        Return complete X, Y and Z grids for a 3D surface plot.
+        Return downsampled X, Y and Z grids for a 3D surface plot.
 
-        X and Y are projected cell-centre coordinates. Z is suitability.
-        Affine rotation and shear are supported.
+        The original suitability field remains at full resolution.
+        Display values are produced using average resampling.
         """
-        height, width = self.field.shape
+        source_height, source_width = self.field.shape
 
+        # Preserve the raster's aspect ratio while fitting it within the
+        # requested maximum display dimensions.
+        display_scale = min(
+            1.0,
+            max_rows / source_height,
+            max_columns / source_width,
+        )
+
+        display_height = max(
+            1,
+            round(source_height * display_scale),
+        )
+        display_width = max(
+            1,
+            round(source_width * display_scale),
+        )
+
+        # Convert masked values to NaN so they are excluded from averaging.
+        source = np.ma.asarray(
+            self.field,
+            dtype=np.float32,
+        ).filled(np.nan)
+
+        display_field = np.full(
+            (display_height, display_width),
+            np.nan,
+            dtype=np.float32,
+        )
+
+        # Make the new, larger display cells cover exactly the same
+        # geographic area as the original raster.
+        display_transform = self.transform * Affine.scale(
+            source_width / display_width,
+            source_height / display_height,
+        )
+
+        reproject(
+            source=source,
+            destination=display_field,
+            src_transform=self.transform,
+            src_crs=self.crs,
+            src_nodata=np.nan,
+            dst_transform=display_transform,
+            dst_crs=self.crs,
+            dst_nodata=np.nan,
+            resampling=Resampling.average,
+        )
+
+        # Coordinates of the centres of the resampled display cells.
         columns, rows = np.meshgrid(
-            np.arange(width, dtype=np.float64) + 0.5,
-            np.arange(height, dtype=np.float64) + 0.5,
+            np.arange(display_width, dtype=np.float64) + 0.5,
+            np.arange(display_height, dtype=np.float64) + 0.5,
         )
 
         x = (
-            self.transform.a * columns
-            + self.transform.b * rows
-            + self.transform.c
+            display_transform.a * columns
+            + display_transform.b * rows
+            + display_transform.c
         )
         y = (
-            self.transform.d * columns
-            + self.transform.e * rows
-            + self.transform.f
+            display_transform.d * columns
+            + display_transform.e * rows
+            + display_transform.f
         )
 
-        return x, y, self.field
+        return x, y, np.ma.masked_invalid(display_field)
 
     def as_display_mapping(self) -> dict[str, Any]:
         """
@@ -156,9 +206,9 @@ class BotanicalSuitabilityFieldResult:
             "data": self.field,
             "transform": self.transform,
             "crs": self.crs,
-            "title": "Botanical suitability field",
+            "title": "NDVI Field",
             "colour_map": "YlGn",
-            "colourbar_label": "Botanical suitability field height",
+            "colourbar_label": "NDVI Field height",
             "vmin": 0.0,
             "vmax": 1.0,
         }

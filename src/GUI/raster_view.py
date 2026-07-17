@@ -1150,7 +1150,7 @@ class DynamicRasterView(RasterView):
             points,
             closed=True,
             fill=True,
-            facecolor="#f3c64d",
+            facecolor="#f05337",
             edgecolor="#111111",
             alpha=0.24,
             linewidth=2,
@@ -1166,11 +1166,19 @@ class DynamicRasterView(RasterView):
         self.area_selected.emit(points)
 
     def cancel_area_selection(self) -> None:
-        """Stop the currently active polygon selector."""
+        """Stop and remove the currently active polygon selector."""
 
-        if self._area_selector is not None:
-            self._area_selector.disconnect_events()
-            self._area_selector = None
+        if self._area_selector is None:
+            return
+
+        selector = self._area_selector
+
+        selector.set_active(False)
+        selector.set_visible(False)
+        selector.disconnect_events()
+
+        self._area_selector = None
+        self.canvas.draw_idle()
 
     def _remove_area_patch(self) -> bool:
         """Remove the completed polygon patch without changing GUI state."""

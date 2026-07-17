@@ -2,13 +2,14 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Debug Rivelero GUI",
+            "name": "Run Rivelero GUI",
             "type": "debugpy",
             "request": "launch",
             "module": "GUI.main",
-            "cwd": "${workspaceFolder}/src",
             "console": "integratedTerminal",
-            "justMyCode": true
+            "cwd": "${workspaceFolder}/src",
+            "justMyCode": true,
+            "stopOnEntry": false,
         }
     ]
 }
