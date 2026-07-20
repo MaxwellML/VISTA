@@ -1,12 +1,10 @@
-# GUI/main.py
+"""Application entry point for the Rivelero GUI."""
 
 import sys
 from datetime import datetime, timezone
 
 from dateutil.relativedelta import relativedelta
 from PySide6.QtWidgets import QApplication
-
-from .main_window import MainWindow
 
 from SOE.botanical_suitability_field import (
     build_botanical_suitability_field,
@@ -19,8 +17,14 @@ from SOE.observability_potential_field import (
 )
 from SOE.visibility_field import build_visibility_field
 
+from .main_window import MainWindow
+
+from SOE.viewpoint import Viewpoint, build_viewpoint_opf
+
 
 def main() -> int:
+    """Create and run the Rivelero Qt application."""
+
     app = QApplication(sys.argv)
 
     # These will eventually come from GUI controls or project data.
@@ -30,13 +34,13 @@ def main() -> int:
     now = datetime.now(timezone.utc)
 
     time_to = now.isoformat(
-        timespec="seconds"
+        timespec="seconds",
     ).replace("+00:00", "Z")
 
     time_from = (
         now - relativedelta(months=1)
     ).isoformat(
-        timespec="seconds"
+        timespec="seconds",
     ).replace("+00:00", "Z")
 
     window = MainWindow(
@@ -51,7 +55,7 @@ def main() -> int:
     )
 
     window.show()
-    return app.exec()
+    return app.exec() #begin the event loop.
 
 
 if __name__ == "__main__":

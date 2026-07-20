@@ -13,26 +13,32 @@ The component fields and the observability potential field are displayed in tabs
 
 from __future__ import annotations
 
+import csv
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
+from pyproj import Transformer
 from PySide6.QtCore import QThreadPool, Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
     QFileDialog,
     QFrame,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QMainWindow,
     QMessageBox,
     QProgressBar,
     QPushButton,
     QSizePolicy,
+    QTableWidget,
+    QTableWidgetItem,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -46,12 +52,29 @@ from .raster_view import (
 )
 from .worker import FunctionWorker
 
+from SOE.viewpoint import (
+    Viewpoint as OPFViewpoint,
+    ViewpointOPFResult,
+    build_viewpoint_opf,
+)
+
 
 ModuleRunner = Callable[..., object]
 SelectedModules = dict[
     str,
     tuple[ModuleRunner, dict[str, Any]],
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class Viewpoint:
+    """One viewpoint in both DEM and geographic coordinates."""
+
+    identifier: int
+    map_x: float
+    map_y: float
+    longitude: float
+    latitude: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +177,17 @@ class MainWindow(QMainWindow):
         self.resize(1250, 780)
         self.setMinimumSize(900, 600)
 
+        # Existing viewpoint state used by the table and DEM markers.
+        self.viewpoints: list[Viewpoint] = []
+        self._dem_to_wgs84: Transformer | None = None
+        self._wgs84_to_dem: Transformer | None = None
+
+   
+        self.viewpoint_radius_m = 100.0
+
+        self.viewpoint_results: dict[int, ViewpointOPFResult] = {} #cropped OPF results keyed by the stable table ID.
+
+
         self._build_menu()
         self._build_interface()
         self._apply_styles()
@@ -226,6 +260,66 @@ class MainWindow(QMainWindow):
 
         left_layout.addWidget(input_group)
 
+        viewpoints_group = QGroupBox("Viewpoints")
+        viewpoints_layout = QVBoxLayout(viewpoints_group)
+
+        self.import_viewpoints_button = QPushButton(
+            "Import coordinates from CSV…"
+        )
+        self.import_viewpoints_button.clicked.connect(
+            self.import_viewpoints_csv
+        )
+        viewpoints_layout.addWidget(self.import_viewpoints_button)
+
+        self.add_viewpoints_button = QPushButton(
+            "Add coordinates on map"
+        )
+        self.add_viewpoints_button.setCheckable(True)
+        self.add_viewpoints_button.toggled.connect(
+            self._set_viewpoint_mode_from_panel
+        )
+        viewpoints_layout.addWidget(self.add_viewpoints_button)
+
+        self.viewpoint_count_label = QLabel("0 viewpoints")
+        self.viewpoint_count_label.setObjectName("pathLabel")
+        viewpoints_layout.addWidget(self.viewpoint_count_label)
+
+        self.viewpoint_table = QTableWidget(0, 3)
+        self.viewpoint_table.setHorizontalHeaderLabels(
+            ["#", "Latitude", "Longitude"]
+        )
+        self.viewpoint_table.verticalHeader().setVisible(False)
+        self.viewpoint_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        self.viewpoint_table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.viewpoint_table.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection
+        )
+        self.viewpoint_table.itemSelectionChanged.connect(
+            self._on_viewpoint_table_selection_changed
+        )
+        self.viewpoint_table.setMaximumHeight(160)
+
+        header = self.viewpoint_table.horizontalHeader()
+        header.setSectionResizeMode(
+            0,
+            QHeaderView.ResizeMode.ResizeToContents,
+        )
+        header.setSectionResizeMode(
+            1,
+            QHeaderView.ResizeMode.Stretch,
+        )
+        header.setSectionResizeMode(
+            2,
+            QHeaderView.ResizeMode.Stretch,
+        )
+
+        viewpoints_layout.addWidget(self.viewpoint_table)
+        left_layout.addWidget(viewpoints_group)
+
         module_group = QGroupBox("Modules")
         module_layout = QVBoxLayout(module_group)
 
@@ -294,6 +388,19 @@ class MainWindow(QMainWindow):
             self._show_area_selection_error
         )
 
+        self.dem_view.viewpoint_clicked.connect(
+            self._receive_viewpoint_click
+        )
+        self.dem_view.viewpoint_selection_toggled.connect(
+            self._sync_viewpoint_mode
+        )
+        self.dem_view.viewpoints_clear_requested.connect(
+            self._clear_viewpoints
+        )
+        self.dem_view.viewpoint_selection_error.connect(
+            self._show_viewpoint_selection_error
+        )
+
         self.los_view = RasterView("Run the LoS module to show a result.")
         self.ndvi_view = RasterView("Run the NDVI module to show a result.")
         self.obstacle_view = RasterView(
@@ -354,6 +461,345 @@ class MainWindow(QMainWindow):
         )
         self._update_controls()
 
+    def _set_viewpoint_mode_from_panel(
+        self,
+        enabled: bool,
+    ) -> None:
+        """Mirror the left-panel button onto the Matplotlib tool."""
+
+        if enabled:
+            self.tabs.setCurrentWidget(self.dem_view)
+
+        self.dem_view.set_viewpoint_selection_active(enabled)
+
+    def _sync_viewpoint_mode(
+        self,
+        enabled: bool,
+    ) -> None:
+        """Keep the panel button synchronised with the toolbar."""
+
+        self.add_viewpoints_button.blockSignals(True)
+        self.add_viewpoints_button.setChecked(enabled)
+        self.add_viewpoints_button.setText(
+            "Finish adding coordinates"
+            if enabled
+            else "Add coordinates on map"
+        )
+        self.add_viewpoints_button.blockSignals(False)
+
+        if enabled:
+            self.status_label.setText(
+                "Click the DEM to add viewpoints. "
+                "Use pan or zoom to leave placement mode."
+            )
+
+    def _show_viewpoint_selection_error(
+        self,
+        message: str,
+    ) -> None:
+        """Display an error raised while activating placement."""
+
+        QMessageBox.warning(
+            self,
+            "Viewpoint selection unavailable",
+            message,
+        )
+
+    def _receive_viewpoint_click(
+        self,
+        point: tuple[float, float],
+    ) -> None:
+        """Convert a DEM click into a stored viewpoint."""
+
+        if self.target_geometry is None:
+            return
+
+        if self._dem_to_wgs84 is None:
+            self._show_error(
+                "Coordinate conversion unavailable",
+                "The DEM coordinate transformer has not been created.",
+            )
+            return
+
+        map_x, map_y = point
+        longitude, latitude = self._dem_to_wgs84.transform(
+            map_x,
+            map_y,
+        )
+
+        self._store_viewpoint(
+            map_x=map_x,
+            map_y=map_y,
+            longitude=longitude,
+            latitude=latitude,
+        )
+
+    def _store_viewpoint(
+        self,
+        *,
+        map_x: float,
+        map_y: float,
+        longitude: float,
+        latitude: float,
+    ) -> None:
+        """Store and display one viewpoint from any input source."""
+
+        identifier = max(
+            (viewpoint.identifier for viewpoint in self.viewpoints),
+            default=0,
+        ) + 1
+
+        viewpoint = Viewpoint(
+            identifier=identifier,
+            map_x=map_x,
+            map_y=map_y,
+            longitude=longitude,
+            latitude=latitude,
+        )
+        self.viewpoints.append(viewpoint)
+
+        self.dem_view.add_viewpoint_marker(
+            map_x,
+            map_y,
+            identifier,
+        )
+
+        row = self.viewpoint_table.rowCount()
+        self.viewpoint_table.insertRow(row)
+
+        values = (
+            str(identifier),
+            f"{latitude:.6f}",
+            f"{longitude:.6f}",
+        )
+
+        for column, value in enumerate(values):
+            item = QTableWidgetItem(value)
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item.setData(
+                Qt.ItemDataRole.UserRole,
+                identifier,
+            )
+            self.viewpoint_table.setItem(row, column, item)
+
+        self.viewpoint_table.selectRow(row)
+
+        count = len(self.viewpoints)
+        suffix = "" if count == 1 else "s"
+        self.viewpoint_count_label.setText(
+            f"{count} viewpoint{suffix}"
+        )
+
+        self.status_label.setText(
+            f"Viewpoint {identifier} added at "
+            f"{latitude:.6f}, {longitude:.6f}."
+        )
+        self._update_controls()
+
+    def _on_viewpoint_table_selection_changed(self) -> None:
+        """Highlight the map item linked to the selected table row."""
+
+        selected_items = self.viewpoint_table.selectedItems()
+
+        if not selected_items:
+            self.dem_view.highlight_viewpoint(None)
+            self.opf_view.highlight_viewpoint_region(None)
+            return
+
+        identifier = selected_items[0].data(
+            Qt.ItemDataRole.UserRole
+        )
+
+        if not isinstance(identifier, int):
+            self.dem_view.highlight_viewpoint(None)
+            self.opf_view.highlight_viewpoint_region(None)
+            return
+
+        self.dem_view.highlight_viewpoint(identifier)
+        self.tabs.setCurrentWidget(self.dem_view)
+
+
+
+        viewpoint = next(
+            (
+                candidate
+                for candidate in self.viewpoints
+                if candidate.identifier == identifier
+            ),
+            None,
+        )
+
+        if viewpoint is not None:
+            self.status_label.setText(
+                f"Viewpoint {identifier} selected at "
+                f"{viewpoint.latitude:.6f}, "
+                f"{viewpoint.longitude:.6f}."
+            )
+
+    def _clear_viewpoints(self) -> None:
+        """Clear stored records, table rows and DEM markers."""
+
+        self.dem_view.set_viewpoint_selection_active(False)
+        self.viewpoints.clear()
+        self.viewpoint_table.setRowCount(0)
+        self.viewpoint_count_label.setText("0 viewpoints")
+        self.dem_view.clear_viewpoint_markers()
+
+        self.viewpoint_results.clear()
+        self.opf_view.clear_viewpoint_regions()
+
+        self._update_controls()
+
+    def import_viewpoints_csv(self) -> None:
+        """Import latitude/longitude coordinates from a CSV file."""
+
+        if self.target_geometry is None:
+            self._show_error(
+                "CSV import unavailable",
+                "Define the region of interest before importing viewpoints.",
+            )
+            return
+
+        if self._wgs84_to_dem is None:
+            self._show_error(
+                "CSV import unavailable",
+                "Load a georeferenced DEM first.",
+            )
+            return
+
+        filename, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import viewpoints",
+            "",
+            "CSV files (*.csv);;All files (*)",
+        )
+
+        if not filename:
+            return
+
+        pending: list[tuple[float, float, float, float]] = []
+
+        try:
+            with open(
+                filename,
+                "r",
+                newline="",
+                encoding="utf-8-sig",
+            ) as file:
+                reader = csv.DictReader(file)
+
+                if reader.fieldnames is None:
+                    raise ValueError(
+                        "The CSV does not contain a header row."
+                    )
+
+                headings = {
+                    heading.strip().lower(): heading
+                    for heading in reader.fieldnames
+                }
+                latitude_heading = (
+                    headings.get("lat")
+                    or headings.get("latitude")
+                )
+                longitude_heading = (
+                    headings.get("lon")
+                    or headings.get("longitude")
+                )
+
+                if latitude_heading is None or longitude_heading is None:
+                    raise ValueError(
+                        "The CSV must contain lat and lon columns."
+                    )
+
+                for line_number, row in enumerate(reader, start=2):
+                    try:
+                        latitude = float(row[latitude_heading])
+                        longitude = float(row[longitude_heading])
+                    except (KeyError, TypeError, ValueError) as error:
+                        raise ValueError(
+                            "Invalid coordinates on CSV line "
+                            f"{line_number}."
+                        ) from error
+
+                    if not -90.0 <= latitude <= 90.0:
+                        raise ValueError(
+                            "Latitude outside -90…90 on "
+                            f"line {line_number}."
+                        )
+
+                    if not -180.0 <= longitude <= 180.0:
+                        raise ValueError(
+                            "Longitude outside -180…180 on "
+                            f"line {line_number}."
+                        )
+
+                    map_x, map_y = self._wgs84_to_dem.transform(
+                        longitude,
+                        latitude,
+                    )
+                    pending.append(
+                        (map_x, map_y, longitude, latitude)
+                    )
+
+        except (OSError, ValueError) as error:
+            self._show_error("CSV import failed", str(error))
+            return
+
+        for map_x, map_y, longitude, latitude in pending:
+            self._store_viewpoint(
+                map_x=map_x,
+                map_y=map_y,
+                longitude=longitude,
+                latitude=latitude,
+            )
+
+        self.tabs.setCurrentWidget(self.dem_view)
+        self.status_label.setText(
+            f"Imported {len(pending)} viewpoints."
+        )
+
+
+    def _build_viewpoint_results(self) -> None:
+        """Extract one cropped OPF region for every table viewpoint."""
+    
+        if self.opf_result is None:
+            self.viewpoint_results.clear()
+            self.opf_view.clear_viewpoint_regions()
+            return
+  
+        results: dict[int, ViewpointOPFResult] = {}
+   
+        for viewpoint in self.viewpoints:
+            analysis_viewpoint = OPFViewpoint(
+                identifier=f"Viewpoint {viewpoint.identifier}",
+                x=viewpoint.map_x,
+                y=viewpoint.map_y,
+                radius_m=self.viewpoint_radius_m,
+            )
+
+            try:
+                result = build_viewpoint_opf(
+                    opf_result=self.opf_result,
+                    viewpoint=analysis_viewpoint,
+                )
+            except ValueError:
+                continue
+
+            results[viewpoint.identifier] = result
+
+        self.viewpoint_results = results
+        self.opf_view.set_viewpoint_regions(results)
+
+        selected_items = self.viewpoint_table.selectedItems()
+
+        if selected_items:
+            identifier = selected_items[0].data(
+                Qt.ItemDataRole.UserRole
+            )
+
+            if isinstance(identifier, int):
+                self.opf_view.highlight_viewpoint_region(identifier)
+
     def choose_dem(self) -> None:
         """Ask the user for a local GeoTIFF and display its first band."""
 
@@ -370,6 +816,7 @@ class MainWindow(QMainWindow):
         path = Path(filename)
 
         self.dem_view.clear_selected_area()
+        self._clear_viewpoints()
         self.target_geometry = None
 
         try:
@@ -387,10 +834,24 @@ class MainWindow(QMainWindow):
         self.dem_transform = self.dem_view.source_transform
         self.dem_crs = self.dem_view.source_crs
 
+        self._dem_to_wgs84 = Transformer.from_crs(
+            self.dem_crs,
+            "EPSG:4326",
+            always_xy=True,
+        )
+        self._wgs84_to_dem = Transformer.from_crs(
+            "EPSG:4326",
+            self.dem_crs,
+            always_xy=True,
+        )
+
         self.visibility_result = None
         self.botanical_result = None
         self.occlusion_result = None
         self.opf_result = None
+
+        self.viewpoint_results.clear()
+        self.opf_view.clear_viewpoint_regions()
 
         self.opf_view.show_message(
             "Run selected modules to show the observability potential field."
@@ -399,7 +860,9 @@ class MainWindow(QMainWindow):
         self.dem_path_label.setText(str(path))
         self.dem_path_label.setToolTip(str(path))
         self.tabs.setCurrentWidget(self.dem_view)
-        self.status_label.setText("DEM loaded. Choose modules to run.")
+        self.status_label.setText(
+            "DEM loaded. Define a region of interest to enable viewpoints."
+        )
         self._update_controls()
 
     def run_selected_modules(self) -> None:
@@ -660,7 +1123,11 @@ class MainWindow(QMainWindow):
                 fallback_crs=self.dem_crs,
             )
 
+            self._build_viewpoint_results()
             self.opf_view.show_surface(display_result)
+
+
+
 
             if self.tabs.indexOf(self.opf_view) == -1:
                 self.tabs.addTab(self.opf_view, "OPF")
@@ -712,6 +1179,7 @@ class MainWindow(QMainWindow):
 
         is_busy = bool(self._workers)
         has_dem = self.dem_path is not None
+        has_roi = self.target_geometry is not None
         any_selected = any(
             (
                 self.los_checkbox.isChecked(),
@@ -726,6 +1194,22 @@ class MainWindow(QMainWindow):
         self.los_checkbox.setEnabled(checkboxes_enabled)
         self.ndvi_checkbox.setEnabled(checkboxes_enabled)
         self.obstacle_checkbox.setEnabled(checkboxes_enabled)
+
+        viewpoint_entry_enabled = (
+            has_dem
+            and has_roi
+            and not is_busy
+        )
+
+        self.import_viewpoints_button.setEnabled(
+            viewpoint_entry_enabled
+        )
+        self.add_viewpoints_button.setEnabled(
+            viewpoint_entry_enabled
+        )
+        self.dem_view.set_viewpoint_selection_enabled(
+            viewpoint_entry_enabled
+        )
 
         self.run_selected_button.setEnabled(
             has_dem and any_selected and not is_busy
@@ -819,6 +1303,21 @@ class MainWindow(QMainWindow):
                 color: #707070;
                 background-color: #1d1d1d;
                 border-color: #333333;
+            }
+
+            QTableWidget {
+                background-color: #202020;
+                alternate-background-color: #252525;
+                border: 1px solid #3d3d3d;
+                gridline-color: #3d3d3d;
+                selection-background-color: #5a4b00;
+                selection-color: #ffffff;
+            }
+
+            QHeaderView::section {
+                background-color: #292929;
+                border: 1px solid #3d3d3d;
+                padding: 5px;
             }
 
             QTabWidget::pane {

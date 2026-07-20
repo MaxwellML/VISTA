@@ -86,11 +86,11 @@ def build_observability_potential_field(
         component_arrays.append(visibility)
 
     if botanical_result is not None:
-        ndvi = np.asarray(
-            botanical_result.ndvi,
+        botanical = np.asarray(
+            botanical_result.field,
             dtype=np.float32,
         )
-        component_arrays.append(ndvi)
+        component_arrays.append(botanical)
 
     if occlusion_result is not None:
         occlusion = np.asarray(
@@ -120,7 +120,7 @@ def build_observability_potential_field(
 
     if botanical_result is not None:
         field[valid_mask] += (
-            ndvi_weight * ndvi[valid_mask]
+            ndvi_weight * botanical[valid_mask]
         )
 
     if occlusion_result is not None:
