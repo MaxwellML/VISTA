@@ -616,8 +616,7 @@ class MainWindow(QMainWindow):
             return
 
         self.dem_view.highlight_viewpoint(identifier)
-        self.tabs.setCurrentWidget(self.dem_view)
-
+        self.opf_view.highlight_viewpoint_region(identifier)
 
 
         viewpoint = next(
@@ -790,15 +789,6 @@ class MainWindow(QMainWindow):
         self.viewpoint_results = results
         self.opf_view.set_viewpoint_regions(results)
 
-        selected_items = self.viewpoint_table.selectedItems()
-
-        if selected_items:
-            identifier = selected_items[0].data(
-                Qt.ItemDataRole.UserRole
-            )
-
-            if isinstance(identifier, int):
-                self.opf_view.highlight_viewpoint_region(identifier)
 
     def choose_dem(self) -> None:
         """Ask the user for a local GeoTIFF and display its first band."""

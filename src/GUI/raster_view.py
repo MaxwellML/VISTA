@@ -950,14 +950,13 @@ class RasterView(QWidget):
                 x,
                 y,
                 z,
-                color="#ffd54f" if selected else "#ffffff",
-                alpha=0.62 if selected else 0.16,
-                linewidth=0.45 if selected else 0.0,
-                edgecolor="#111111" if selected else "none",
+                color="#ffd54f" if selected else "#5f7d8a",
+                alpha=0.90 if selected else 0.65,
+                linewidth=0.55 if selected else 0.15,
+                edgecolor="#111111" if selected else "#444444",
                 antialiased=True,
                 shade=False,
             )
-
             self._viewpoint_region_artists[identifier] = surface
 
         self.canvas.draw_idle()
