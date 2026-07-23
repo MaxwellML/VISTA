@@ -16,21 +16,24 @@ from .observability_potential_field import (
 )
 
 
+
 @dataclass(frozen=True, slots=True)
-class Viewpoint:
-    """One location from which a local OPF region is requested."""
+class ViewpointRegion:
+    """One circular or rectangular local OPF region."""
 
     identifier: str
     x: float
     y: float
-    radius_m: float
+    radius_m: float | None = None
+    bounds: tuple[float, float, float, float] | None = None
 
 
 @dataclass(slots=True)
 class ViewpointOPFResult:
     """The portion of an OPF available to one viewpoint."""
 
-    viewpoint: Viewpoint
+    
+    viewpoint: ViewpointRegion
     field: np.ndarray
     valid_mask: np.ndarray
     transform: Affine
@@ -52,12 +55,19 @@ class ViewpointOPFResult:
 def build_viewpoint_opf(
     *,
     opf_result: ObservabilityPotentialFieldResult,
-    viewpoint: Viewpoint,
-) -> ViewpointOPFResult:
-    """Mask an existing OPF to a circle around one viewpoint."""
 
-    if viewpoint.radius_m <= 0:
-        raise ValueError("Viewpoint radius must be greater than zero.")
+    viewpoint: ViewpointRegion,
+) -> ViewpointOPFResult:
+ 
+    """Mask an existing OPF to one circular or rectangular region."""
+
+    has_radius = viewpoint.radius_m is not None
+    has_bounds = viewpoint.bounds is not None
+
+    if has_radius == has_bounds:
+        raise ValueError(
+            "A viewpoint region must define exactly one of radius_m or bounds."
+        )
 
     rows, columns = np.indices(
         opf_result.field.shape,
@@ -81,19 +91,53 @@ def build_viewpoint_opf(
         + transform.f
     )
 
-    circle_mask = (
-        (x_coordinates - viewpoint.x) ** 2
-        + (y_coordinates - viewpoint.y) ** 2
-        <= viewpoint.radius_m**2
-    )
+
+    if viewpoint.bounds is not None:
+        xmin, ymin, xmax, ymax = viewpoint.bounds
+
+        if not np.isfinite((xmin, ymin, xmax, ymax)).all():
+            raise ValueError(
+                "Viewpoint bounds must contain only finite values."
+            )
+
+        if xmin >= xmax or ymin >= ymax:
+            raise ValueError(
+                "Viewpoint bounds must satisfy xmin < xmax and ymin < ymax."
+            )
+
+        region_mask = (
+            (x_coordinates >= xmin)
+            & (x_coordinates < xmax)
+            & (y_coordinates >= ymin)
+            & (y_coordinates < ymax)
+        )
+    else:
+        radius_m = viewpoint.radius_m
+
+        if radius_m is None:
+            raise ValueError("Viewpoint radius is missing.")
+
+        if not np.isfinite(radius_m) or radius_m <= 0:
+            raise ValueError(
+                "Viewpoint radius must be a finite value greater than zero."
+            )
+
+        region_mask = (
+            (x_coordinates - viewpoint.x) ** 2
+            + (y_coordinates - viewpoint.y) ** 2
+            <= radius_m**2
+        )
 
     # Anything already invalid in the OPF stays invalid.
-    valid_mask = opf_result.valid_mask & circle_mask
+    valid_mask = opf_result.valid_mask & region_mask
 
     valid_rows, valid_columns = np.nonzero(valid_mask)
 
     if valid_rows.size == 0:
-        raise ValueError("The viewpoint circle contains no valid OPF cells.")
+       
+        raise ValueError(
+            "The viewpoint region contains no valid OPF cells."
+        )
 
     row_min = int(valid_rows.min())
     row_max = int(valid_rows.max())

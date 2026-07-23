@@ -56,8 +56,9 @@ from .worker import FunctionWorker
 
 from SOE.downsample_to_resolution import downsample_to_resolution
 
+
 from SOE.viewpoint import (
-    Viewpoint as OPFViewpoint,
+    ViewpointRegion,
     ViewpointOPFResult,
     build_viewpoint_opf,
 )
@@ -158,7 +159,7 @@ class MainWindow(QMainWindow):
         observer_geometry: object | None = None,
         time_from: str | None = None,
         time_to: str | None = None,
-        fast_mode_resolution: float = 100.0,
+        fast_mode_resolution: float = 1000.0,
     ) -> None:
         super().__init__()
 
@@ -984,7 +985,8 @@ class MainWindow(QMainWindow):
         results: dict[int, ViewpointOPFResult] = {}
 
         for viewpoint in self.active_viewpoints:
-            analysis_viewpoint = OPFViewpoint(
+
+            analysis_region = ViewpointRegion(
                 identifier=f"Viewpoint {viewpoint.identifier}",
                 x=viewpoint.map_x,
                 y=viewpoint.map_y,
@@ -999,7 +1001,7 @@ class MainWindow(QMainWindow):
             try:
                 result = build_viewpoint_opf(
                     opf_result=self.opf_result,
-                    viewpoint=analysis_viewpoint,
+                    viewpoint=analysis_region,
                 )
             except ValueError:
                 continue

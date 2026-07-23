@@ -19,7 +19,7 @@ from SOE.visibility_field import build_visibility_field
 
 from .main_window import MainWindow
 
-from SOE.viewpoint import Viewpoint, build_viewpoint_opf
+from SOE.viewpoint import ViewpointRegion, build_viewpoint_opf
 
 from admin.sysinfo.process_monitor import (
     start_process_monitor,

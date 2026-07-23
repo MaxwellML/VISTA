@@ -1,11 +1,10 @@
 from .viewpoint import (
-    Viewpoint,
+    ViewpointRegion,
     ViewpointOPFResult,
     build_viewpoint_opf,
 )
-
 __all__ = [
-    "Viewpoint",
+    "ViewpointRegion",
     "ViewpointOPFResult",
     "build_viewpoint_opf",
 ]

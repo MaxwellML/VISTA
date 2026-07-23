@@ -151,16 +151,3 @@ def stop_process_monitor() -> None:
     _monitor_thread = None
 
     print("System monitor stopped.")
-
-
-if __name__ == "__main__":
-    from time import sleep
-
-    if arg.sysinfo:
-        start_process_monitor()
-
-    try:
-        while True:
-            sleep(1)
-    except KeyboardInterrupt:
-        stop_process_monitor()
