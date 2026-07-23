@@ -16,3 +16,4 @@ dependencies:
   - lark
   - pillow
   - PySide6
+  - psutil

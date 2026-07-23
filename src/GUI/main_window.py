@@ -20,9 +20,11 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
+import numpy as np
+
 from pyproj import Transformer
 from PySide6.QtCore import QThreadPool, Qt
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -52,6 +54,8 @@ from .raster_view import (
 )
 from .worker import FunctionWorker
 
+from SOE.downsample_to_resolution import downsample_to_resolution
+
 from SOE.viewpoint import (
     Viewpoint as OPFViewpoint,
     ViewpointOPFResult,
@@ -68,13 +72,21 @@ SelectedModules = dict[
 
 @dataclass(frozen=True, slots=True)
 class Viewpoint:
-    """One viewpoint in both DEM and geographic coordinates."""
+    """One original point or merged square in map/geographic coordinates."""
 
     identifier: int
     map_x: float
     map_y: float
     longitude: float
     latitude: float
+
+    square_bounds: tuple[float, float, float, float] | None = None
+    source_identifiers: tuple[int, ...] = ()
+
+    @property
+    def is_merged(self) -> bool:
+        """Return whether this record represents a downsampled square."""
+        return self.square_bounds is not None
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,7 +144,6 @@ def run_selected_pipeline_on_visible_dem_crop(
         )
 
 
-
 class MainWindow(QMainWindow):
     """Rivelero window containing the DEM and component-result views."""
 
@@ -147,6 +158,7 @@ class MainWindow(QMainWindow):
         observer_geometry: object | None = None,
         time_from: str | None = None,
         time_to: str | None = None,
+        fast_mode_resolution: float = 100.0,
     ) -> None:
         super().__init__()
 
@@ -177,24 +189,37 @@ class MainWindow(QMainWindow):
         self.resize(1250, 780)
         self.setMinimumSize(900, 600)
 
-        # Existing viewpoint state used by the table and DEM markers.
-        self.viewpoints: list[Viewpoint] = []
+        # Slow mode retains exact input locations. Fast mode uses a derived
+        # fixed-grid representation without mutating the original records.
+        if fast_mode_resolution <= 0:
+            raise ValueError("fast_mode_resolution must be greater than zero.")
+
+        self.analysis_mode = "slow"
+        self.fast_mode_resolution = float(fast_mode_resolution)
+        self.original_viewpoints: list[Viewpoint] = []
+        self.downsampled_viewpoints: list[Viewpoint] = []
+
         self._dem_to_wgs84: Transformer | None = None
         self._wgs84_to_dem: Transformer | None = None
 
-   
         self.viewpoint_radius_m = 100.0
-
-        self.viewpoint_results: dict[int, ViewpointOPFResult] = {} #cropped OPF results keyed by the stable table ID.
-
+        self.viewpoint_results: dict[int, ViewpointOPFResult] = {}
 
         self._build_menu()
         self._build_interface()
         self._apply_styles()
         self._update_controls()
 
+    @property
+    def active_viewpoints(self) -> list[Viewpoint]:
+        """Return the viewpoint representation selected by the mode menu."""
+        if self.analysis_mode == "fast":
+            return self.downsampled_viewpoints
+
+        return self.original_viewpoints
+
     def _build_menu(self) -> None:
-        """Create the File menu."""
+        """Create the File and Mode menus."""
 
         file_menu = self.menuBar().addMenu("&File")
 
@@ -209,6 +234,29 @@ class MainWindow(QMainWindow):
         exit_action.setShortcut("Ctrl+Q")
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
+
+        mode_menu = self.menuBar().addMenu("&Mode")
+        self.mode_action_group = QActionGroup(self)
+        self.mode_action_group.setExclusive(True)
+
+        self.slow_mode_action = QAction("Slow mode", self)
+        self.slow_mode_action.setCheckable(True)
+        self.slow_mode_action.setChecked(True)
+        self.slow_mode_action.triggered.connect(
+            lambda checked: checked and self._set_analysis_mode("slow")
+        )
+
+        self.fast_mode_action = QAction("Fast mode", self)
+        self.fast_mode_action.setCheckable(True)
+        self.fast_mode_action.triggered.connect(
+            lambda checked: checked and self._set_analysis_mode("fast")
+        )
+
+        self.mode_action_group.addAction(self.slow_mode_action)
+        self.mode_action_group.addAction(self.fast_mode_action)
+        mode_menu.addAction(self.slow_mode_action)
+        mode_menu.addAction(self.fast_mode_action)
+
 
     def _build_interface(self) -> None:
         """Construct the main window widgets and layouts."""
@@ -280,9 +328,17 @@ class MainWindow(QMainWindow):
         )
         viewpoints_layout.addWidget(self.add_viewpoints_button)
 
-        self.viewpoint_count_label = QLabel("0 viewpoints")
+        self.viewpoint_count_label = QLabel("0 original viewpoints")
         self.viewpoint_count_label.setObjectName("pathLabel")
         viewpoints_layout.addWidget(self.viewpoint_count_label)
+
+        self.mode_warning_label = QLabel(
+            "Warning: original viewpoint information will be lost."
+        )
+        self.mode_warning_label.setObjectName("fastModeWarning")
+        self.mode_warning_label.setWordWrap(True)
+        self.mode_warning_label.setVisible(False)
+        viewpoints_layout.addWidget(self.mode_warning_label)
 
         self.viewpoint_table = QTableWidget(0, 3)
         self.viewpoint_table.setHorizontalHeaderLabels(
@@ -505,6 +561,170 @@ class MainWindow(QMainWindow):
             message,
         )
 
+    def _set_analysis_mode(self, mode: str) -> None:
+        """Switch the table and DEM preview between exact and merged inputs."""
+        if mode not in {"slow", "fast"}:
+            raise ValueError(f"Unsupported analysis mode: {mode!r}")
+
+        if mode == self.analysis_mode:
+            return
+
+        self.analysis_mode = mode
+
+        if mode == "fast":
+            self._rebuild_downsampled_viewpoints()
+
+        self.mode_warning_label.setVisible(mode == "fast")
+        self._refresh_viewpoint_preview()
+
+        if self.opf_result is not None:
+            self._build_viewpoint_results()
+
+        if mode == "fast":
+            self.status_label.setText(
+                "Fast mode selected. Warning: original viewpoint "
+                "information will be lost."
+            )
+        else:
+            self.status_label.setText(
+                "Slow mode selected. Original viewpoints are shown."
+            )
+
+    def _rebuild_downsampled_viewpoints(self) -> None:
+        """Derive merged square records from the retained original points."""
+        self.downsampled_viewpoints.clear()
+
+        if not self.original_viewpoints:
+            return
+
+        if self._dem_to_wgs84 is None:
+            return
+
+        points = np.asarray(
+            [
+                (viewpoint.map_x, viewpoint.map_y)
+                for viewpoint in self.original_viewpoints
+            ],
+            dtype=float,
+        )
+
+        origin_x = 0.0
+        origin_y = 0.0
+
+        if self.dem_transform is not None:
+            origin_x = float(self.dem_transform.c)
+            origin_y = float(self.dem_transform.f)
+
+        merged_regions = downsample_to_resolution(
+            points,
+            self.fast_mode_resolution,
+            origin_x=origin_x,
+            origin_y=origin_y,
+        )
+
+        for identifier, region in enumerate(merged_regions, start=1):
+            longitude, latitude = self._dem_to_wgs84.transform(
+                region.x,
+                region.y,
+            )
+
+            source_identifiers = tuple(
+                self.original_viewpoints[index].identifier
+                for index in region.source_indices
+            )
+
+            self.downsampled_viewpoints.append(
+                Viewpoint(
+                    identifier=identifier,
+                    map_x=region.x,
+                    map_y=region.y,
+                    longitude=longitude,
+                    latitude=latitude,
+                    square_bounds=region.bounds,
+                    source_identifiers=source_identifiers,
+                )
+            )
+
+    def _refresh_viewpoint_preview(self) -> None:
+        """Redraw the table and DEM overlays for the active mode."""
+        viewpoints = self.active_viewpoints
+
+        self.viewpoint_table.blockSignals(True)
+
+        try:
+            self.viewpoint_table.setRowCount(0)
+            self.dem_view.clear_viewpoint_markers()
+
+            self.viewpoint_table.setHorizontalHeaderLabels(
+                [
+                    "Region" if self.analysis_mode == "fast" else "#",
+                    "Latitude",
+                    "Longitude",
+                ]
+            )
+
+            for viewpoint in viewpoints:
+                if viewpoint.square_bounds is None:
+                    self.dem_view.add_viewpoint_marker(
+                        viewpoint.map_x,
+                        viewpoint.map_y,
+                        viewpoint.identifier,
+                    )
+                    identifier_text = str(viewpoint.identifier)
+                else:
+                    self.dem_view.add_viewpoint_square(
+                        bounds=viewpoint.square_bounds,
+                        identifier=viewpoint.identifier,
+                        source_count=len(viewpoint.source_identifiers),
+                    )
+                    identifier_text = (
+                        f"{viewpoint.identifier} "
+                        f"({len(viewpoint.source_identifiers)})"
+                    )
+
+                row = self.viewpoint_table.rowCount()
+                self.viewpoint_table.insertRow(row)
+
+                values = (
+                    identifier_text,
+                    f"{viewpoint.latitude:.6f}",
+                    f"{viewpoint.longitude:.6f}",
+                )
+
+                for column, value in enumerate(values):
+                    item = QTableWidgetItem(value)
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    item.setData(
+                        Qt.ItemDataRole.UserRole,
+                        viewpoint.identifier,
+                    )
+                    self.viewpoint_table.setItem(row, column, item)
+        finally:
+            self.viewpoint_table.blockSignals(False)
+
+        self.dem_view.highlight_viewpoint(None)
+        self.opf_view.highlight_viewpoint_region(None)
+
+        if self.analysis_mode == "fast":
+            merged_count = len(self.downsampled_viewpoints)
+            original_count = len(self.original_viewpoints)
+
+            self.viewpoint_count_label.setText(
+                f"{merged_count} merged viewpoint"
+                f"{'s' if merged_count != 1 else ''} from "
+                f"{original_count} original viewpoint"
+                f"{'s' if original_count != 1 else ''}"
+            )
+        else:
+            count = len(self.original_viewpoints)
+
+            self.viewpoint_count_label.setText(
+                f"{count} original viewpoint"
+                f"{'s' if count != 1 else ''}"
+            )
+
+        self._update_controls()
+
     def _receive_viewpoint_click(
         self,
         point: tuple[float, float],
@@ -542,10 +762,13 @@ class MainWindow(QMainWindow):
         longitude: float,
         latitude: float,
     ) -> None:
-        """Store and display one viewpoint from any input source."""
+        """Store one exact input viewpoint and refresh both representations."""
 
         identifier = max(
-            (viewpoint.identifier for viewpoint in self.viewpoints),
+            (
+                viewpoint.identifier
+                for viewpoint in self.original_viewpoints
+            ),
             default=0,
         ) + 1
 
@@ -555,46 +778,31 @@ class MainWindow(QMainWindow):
             map_y=map_y,
             longitude=longitude,
             latitude=latitude,
-        )
-        self.viewpoints.append(viewpoint)
-
-        self.dem_view.add_viewpoint_marker(
-            map_x,
-            map_y,
-            identifier,
+            source_identifiers=(identifier,),
         )
 
-        row = self.viewpoint_table.rowCount()
-        self.viewpoint_table.insertRow(row)
+        self.original_viewpoints.append(viewpoint)
+        self._rebuild_downsampled_viewpoints()
+        self._refresh_viewpoint_preview()
 
-        values = (
-            str(identifier),
-            f"{latitude:.6f}",
-            f"{longitude:.6f}",
-        )
+        if self.opf_result is not None:
+            self._build_viewpoint_results()
 
-        for column, value in enumerate(values):
-            item = QTableWidgetItem(value)
-            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            item.setData(
-                Qt.ItemDataRole.UserRole,
-                identifier,
-            )
-            self.viewpoint_table.setItem(row, column, item)
-
-        self.viewpoint_table.selectRow(row)
-
-        count = len(self.viewpoints)
-        suffix = "" if count == 1 else "s"
-        self.viewpoint_count_label.setText(
-            f"{count} viewpoint{suffix}"
-        )
+        if self.analysis_mode == "slow":
+            row = len(self.original_viewpoints) - 1
+            self.viewpoint_table.selectRow(row)
+        else:
+            for row, merged_viewpoint in enumerate(
+                self.downsampled_viewpoints
+            ):
+                if identifier in merged_viewpoint.source_identifiers:
+                    self.viewpoint_table.selectRow(row)
+                    break
 
         self.status_label.setText(
-            f"Viewpoint {identifier} added at "
+            f"Original viewpoint {identifier} added at "
             f"{latitude:.6f}, {longitude:.6f}."
         )
-        self._update_controls()
 
     def _on_viewpoint_table_selection_changed(self) -> None:
         """Highlight the map item linked to the selected table row."""
@@ -622,32 +830,39 @@ class MainWindow(QMainWindow):
         viewpoint = next(
             (
                 candidate
-                for candidate in self.viewpoints
+                for candidate in self.active_viewpoints
                 if candidate.identifier == identifier
             ),
             None,
         )
 
-        if viewpoint is not None:
+        if viewpoint is None:
+            return
+
+        if viewpoint.is_merged:
             self.status_label.setText(
-                f"Viewpoint {identifier} selected at "
+                f"Merged viewpoint {identifier} represents "
+                f"{len(viewpoint.source_identifiers)} original "
+                f"viewpoints; centre at {viewpoint.latitude:.6f}, "
+                f"{viewpoint.longitude:.6f}."
+            )
+        else:
+            self.status_label.setText(
+                f"Original viewpoint {identifier} selected at "
                 f"{viewpoint.latitude:.6f}, "
                 f"{viewpoint.longitude:.6f}."
             )
 
     def _clear_viewpoints(self) -> None:
-        """Clear stored records, table rows and DEM markers."""
+        """Clear both exact and downsampled viewpoint representations."""
 
         self.dem_view.set_viewpoint_selection_active(False)
-        self.viewpoints.clear()
-        self.viewpoint_table.setRowCount(0)
-        self.viewpoint_count_label.setText("0 viewpoints")
-        self.dem_view.clear_viewpoint_markers()
+        self.original_viewpoints.clear()
+        self.downsampled_viewpoints.clear()
+        self._refresh_viewpoint_preview()
 
         self.viewpoint_results.clear()
         self.opf_view.clear_viewpoint_regions()
-
-        self._update_controls()
 
     def import_viewpoints_csv(self) -> None:
         """Import latitude/longitude coordinates from a CSV file."""
@@ -759,21 +974,26 @@ class MainWindow(QMainWindow):
 
 
     def _build_viewpoint_results(self) -> None:
-        """Extract one cropped OPF region for every table viewpoint."""
-    
+        """Extract one cropped OPF region for every active viewpoint."""
+
         if self.opf_result is None:
             self.viewpoint_results.clear()
             self.opf_view.clear_viewpoint_regions()
             return
-  
+
         results: dict[int, ViewpointOPFResult] = {}
-   
-        for viewpoint in self.viewpoints:
+
+        for viewpoint in self.active_viewpoints:
             analysis_viewpoint = OPFViewpoint(
                 identifier=f"Viewpoint {viewpoint.identifier}",
                 x=viewpoint.map_x,
                 y=viewpoint.map_y,
-                radius_m=self.viewpoint_radius_m,
+                radius_m=(
+                    None
+                    if viewpoint.square_bounds is not None
+                    else self.viewpoint_radius_m
+                ),
+                bounds=viewpoint.square_bounds,
             )
 
             try:
@@ -1117,8 +1337,6 @@ class MainWindow(QMainWindow):
             self.opf_view.show_surface(display_result)
 
 
-
-
             if self.tabs.indexOf(self.opf_view) == -1:
                 self.tabs.addTab(self.opf_view, "OPF")
 
@@ -1179,6 +1397,8 @@ class MainWindow(QMainWindow):
         )
 
         self.load_dem_button.setEnabled(not is_busy)
+        self.slow_mode_action.setEnabled(not is_busy)
+        self.fast_mode_action.setEnabled(not is_busy)
 
         checkboxes_enabled = has_dem and not is_busy
         self.los_checkbox.setEnabled(checkboxes_enabled)
@@ -1252,6 +1472,11 @@ class MainWindow(QMainWindow):
             QLabel#pathLabel,
             QLabel#statusLabel {
                 color: #bdbdbd;
+            }
+
+            QLabel#fastModeWarning {
+                color: #ffb74d;
+                font-weight: 700;
             }
 
             QGroupBox {

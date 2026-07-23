@@ -12,3 +12,4 @@ osmnx
 lark
 pillow
 PySide6
+psutil

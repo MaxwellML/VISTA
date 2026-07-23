@@ -14,6 +14,12 @@ from collections.abc import Callable
 from matplotlib.backend_bases import MouseButton
 from matplotlib.path import Path as MatplotlibPath
 from matplotlib.patches import Polygon as PolygonPatch
+
+from matplotlib.patches import (
+    Polygon as PolygonPatch,
+    Rectangle as RectanglePatch,
+)
+
 from matplotlib.widgets import PolygonSelector
 
 from PySide6.QtCore import QThreadPool, QTimer, Signal
@@ -575,6 +581,9 @@ class RasterView(QWidget):
         self._area_patch: PolygonPatch | None = None
         self._roi_path: MatplotlibPath | None = None
         self._viewpoint_artists: dict[int, tuple[Any, Any]] = {}
+
+        self._viewpoint_square_artists: dict[int, tuple[Any, Any]] = {}
+
         self._selected_viewpoint_identifier: int | None = None
 
         self._viewpoint_region_results: dict[int, object] = {}
@@ -1070,7 +1079,11 @@ class RasterView(QWidget):
 
         self.toolbar.set_viewpoint_selection_enabled(enabled)
         self.toolbar.set_viewpoint_clear_enabled(
-            enabled and bool(self._viewpoint_artists)
+            enabled
+            and bool(
+                self._viewpoint_artists
+                or self._viewpoint_square_artists
+            )
         )
 
     def add_viewpoint_marker(
@@ -1111,6 +1124,48 @@ class RasterView(QWidget):
         self.toolbar.set_viewpoint_clear_enabled(True)
         self.canvas.draw_idle()
 
+
+    def add_viewpoint_square(
+        self,
+        *,
+        bounds: tuple[float, float, float, float],
+        identifier: int,
+        source_count: int,
+    ) -> None:
+        """Draw one fixed-grid square representing merged viewpoints."""
+        if self._axes is None or not self._axes.images:
+            raise RuntimeError(
+                "A raster must be displayed before drawing viewpoints."
+            )
+
+        xmin, ymin, xmax, ymax = bounds
+
+        square = RectanglePatch(
+            (xmin, ymin),
+            xmax - xmin,
+            ymax - ymin,
+            facecolor="#5f7d8a33",
+            edgecolor="#ffffff",
+            linewidth=1.8,
+            zorder=8,
+        )
+        self._axes.add_patch(square)
+
+        label = self._axes.annotate(
+            f"{identifier} × {source_count}",
+            ((xmin + xmax) / 2.0, (ymin + ymax) / 2.0),
+            ha="center",
+            va="center",
+            color="#ffffff",
+            fontsize=9,
+            fontweight="bold",
+            zorder=9,
+        )
+
+        self._viewpoint_square_artists[identifier] = (square, label)
+        self.toolbar.set_viewpoint_clear_enabled(True)
+        self.canvas.draw_idle()
+   
     def highlight_viewpoint(
         self,
         identifier: int | None,
@@ -1133,23 +1188,44 @@ class RasterView(QWidget):
             )
             label.set_fontsize(10 if selected else 9)
 
+        for viewpoint_identifier, (square, label) in (
+            self._viewpoint_square_artists.items()
+        ):
+            selected = viewpoint_identifier == identifier
+
+            square.set_linewidth(3.0 if selected else 1.8)
+            square.set_edgecolor(
+                "#ffd54f" if selected else "#ffffff"
+            )
+            square.set_facecolor(
+                "#ffd54f44" if selected else "#5f7d8a33"
+            )
+
+            label.set_color(
+                "#ffd54f" if selected else "#ffffff"
+            )
+            label.set_fontsize(10 if selected else 9)
         self.canvas.draw_idle()
-
+        
     def clear_viewpoint_markers(self) -> None:
-        """Remove every visible viewpoint marker."""
+        """Remove every visible point marker and merged square."""
+        artist_groups = (
+            *self._viewpoint_artists.values(),
+            *self._viewpoint_square_artists.values(),
+        )
 
-        for marker, label in self._viewpoint_artists.values():
-            for artist in (marker, label):
+        for geometry, label in artist_groups:
+            for artist in (geometry, label):
                 try:
                     artist.remove()
                 except ValueError:
                     pass
 
         self._viewpoint_artists.clear()
+        self._viewpoint_square_artists.clear()
         self._selected_viewpoint_identifier = None
         self.toolbar.set_viewpoint_clear_enabled(False)
         self.canvas.draw_idle()
-
 
 class DynamicRasterView(RasterView):
     """

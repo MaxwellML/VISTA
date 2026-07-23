@@ -2,7 +2,7 @@
 
 import sys
 from datetime import datetime, timezone
-
+import argparse
 from dateutil.relativedelta import relativedelta
 from PySide6.QtWidgets import QApplication
 
@@ -21,11 +21,31 @@ from .main_window import MainWindow
 
 from SOE.viewpoint import Viewpoint, build_viewpoint_opf
 
+from admin.sysinfo.process_monitor import (
+    start_process_monitor,
+    stop_process_monitor,
+)
+
+
+
+def parse_arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Start Rivelero.")
+
+    parser.add_argument(
+        "--sysinfo",
+        action="store_true",
+        help="Enable system-information monitoring.",
+    )
+
+    return parser.parse_args()
 
 def main() -> int:
     """Create and run the Rivelero Qt application."""
-
+    args = parse_arguments()
     app = QApplication(sys.argv)
+    if args.sysinfo:
+        start_process_monitor(interval_seconds=5.0)
+        app.aboutToQuit.connect(stop_process_monitor)
 
     # These will eventually come from GUI controls or project data.
     target_geometry = None
