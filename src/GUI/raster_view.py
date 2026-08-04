@@ -955,16 +955,20 @@ class RasterView(QWidget):
 
             z = z + z_span * (0.012 if selected else 0.006)
 
+            display_mapping = result.as_display_mapping()
+
             surface = self._axes.plot_surface(
                 x,
                 y,
                 z,
-                color="#ffd54f" if selected else "#5f7d8a",
-                alpha=0.90 if selected else 0.65,
-                linewidth=0.55 if selected else 0.15,
-                edgecolor="#111111" if selected else "#444444",
+                cmap=display_mapping["colour_map"],
+                vmin=display_mapping["vmin"],
+                vmax=display_mapping["vmax"],
+                alpha=1.0,
+                linewidth=0.7 if selected else 0.0,
+                edgecolor="#ffd54f" if selected else "none",
                 antialiased=True,
-                shade=False,
+                shade=True,
             )
             self._viewpoint_region_artists[identifier] = surface
 
