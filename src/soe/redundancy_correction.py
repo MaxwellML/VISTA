@@ -1,261 +1,307 @@
-# post_opf_redundancy.py
+from __future__ import annotations
+"""Reduce viewpoint sets using aggregate OPF contribution."""
+"""DOES NOT CURRENTLY ACCOUNT FOR OVERLAP."""
+
 
 from dataclasses import dataclass
+
 import numpy as np
 
 
-@dataclass
-class ViewpointOPF:
+
+@dataclass(frozen=True, slots=True)
+class ViewpointScore:
+    """Aggregate information score for one viewpoint."""
+
+    identifier: str
+    score: float
+    fraction: float
+    cumulative_fraction: float
+
+
+@dataclass(frozen=True, slots=True)
+class RedundancyCorrectionResult:
+    """Result of reducing a set of viewpoint OPF cutouts."""
+
+    selected: tuple[ViewpointScore, ...]
+    discarded: tuple[ViewpointScore, ...]
+    score_vector: np.ndarray
+    total_score: float
+
+
+def aggregate_viewpoint_score(
+    viewpoint: ViewpointOPFResult,
+) -> float:
     """
-    OPF information associated with one candidate viewpoint.
+    Collapse one viewpoint OPF cutout into one aggregate score.
+
+    Only valid, positive OPF values contribute. Negative OPF values
+    represent no useful observational contribution for this purpose.
     """
-    id: str
-    opf: np.ndarray
+
+    field = np.asarray(
+        viewpoint.field,
+        dtype=np.float64,
+    )
+
+    valid_mask = np.asarray(
+        viewpoint.valid_mask,
+        dtype=bool,
+    )
+
+    values = field[
+        valid_mask & np.isfinite(field)
+    ]
+
+    if values.size == 0:
+        return 0.0
+
+    # We are measuring useful information, not allowing poor/negative
+    # areas to cancel useful areas elsewhere in the cutout.
+    useful_values = np.clip(
+        values,
+        0.0,
+        None,
+    )
+
+    return float(np.sum(useful_values))
 
 
-@dataclass
-class SelectionRecord:
+def build_score_vector(
+    viewpoints: list[ViewpointOPFResult],
+) -> np.ndarray:
     """
-    Records why a viewpoint was selected.
+    Return one aggregate OPF score for every viewpoint.
+
+    Position i in the output corresponds to viewpoints[i].
     """
-    viewpoint_id: str
-    marginal_gain: float
-    marginal_gain_fraction: float
-    retained_information_fraction: float
+
+    return np.asarray(
+        [
+            aggregate_viewpoint_score(viewpoint)
+            for viewpoint in viewpoints
+        ],
+        dtype=np.float64,
+    )
 
 
-@dataclass
-class RedundancyResult:
-    selected: list[str]
-    discarded: list[str]
-    history: list[SelectionRecord]
-    retained_information_fraction: float
+def correct_redundancy(
+    viewpoints: list[ViewpointOPFResult],
+    *,
+    retention: float = 0.95,
+) -> RedundancyCorrectionResult:
+    """
+    Select the smallest number of highest-scoring viewpoints required
+    to account for the requested fraction of aggregate viewpoint score.
 
+    Example:
+        retention=0.95
 
-class PostOPFRedundancyCorrector:
+    means retain enough viewpoints to account for at least 95% of the
+    total score represented by the candidate score vector.
+    """
 
-    def __init__(
-        self,
-        min_gain_fraction: float = 0.01,
-        target_retention: float = 1.0
-    ):
-        """
-        Parameters
-        ----------
-        min_gain_fraction:
-            Minimum marginal information contribution required for another
-            viewpoint to be selected.
-
-            Example:
-                0.01 means the viewpoint must contribute at least 1% of the
-                total OPF information obtainable from all viewpoints.
-
-        target_retention:
-            Stop once this fraction of the total obtainable information
-            has been retained.
-
-            Example:
-                0.95 means stop once the selected viewpoints retain at
-                least 95% of all available OPF information.
-        """
-
-        if not 0 <= min_gain_fraction <= 1:
-            raise ValueError("min_gain_fraction must be between 0 and 1.")
-
-        if not 0 < target_retention <= 1:
-            raise ValueError("target_retention must be between 0 and 1.")
-
-        self.min_gain_fraction = min_gain_fraction
-        self.target_retention = target_retention
-
-    def select(
-        self,
-        viewpoints: list[ViewpointOPF]
-    ) -> RedundancyResult:
-
-        if not viewpoints:
-            return RedundancyResult(
-                selected=[],
-                discarded=[],
-                history=[],
-                retained_information_fraction=0.0
-            )
-
-        # ---------------------------------------------------------
-        # Validate / clean input
-        # ---------------------------------------------------------
-
-        shape = viewpoints[0].opf.shape
-
-        cleaned_viewpoints = []
-
-        for viewpoint in viewpoints:
-
-            if viewpoint.opf.shape != shape:
-                raise ValueError(
-                    "All OPF rasters must have the same shape."
-                )
-
-            # Treat NaN / infinities as zero useful information
-            cleaned = np.nan_to_num(
-                viewpoint.opf.astype(float),
-                nan=0.0,
-                posinf=0.0,
-                neginf=0.0
-            )
-
-            # OPF should not be negative
-            cleaned = np.maximum(cleaned, 0)
-
-            cleaned_viewpoints.append(
-                ViewpointOPF(
-                    id=viewpoint.id,
-                    opf=cleaned
-                )
-            )
-
-        # ---------------------------------------------------------
-        # Calculate the best information obtainable using ALL
-        # viewpoints.
-        #
-        # For every raster cell, take the best OPF value available
-        # from any viewpoint.
-        # ---------------------------------------------------------
-
-        full_information = np.maximum.reduce(
-            [v.opf for v in cleaned_viewpoints]
+    if not 0.0 < retention <= 1.0:
+        raise ValueError(
+            "retention must be greater than 0 and at most 1."
         )
 
-        total_possible_information = np.sum(full_information)
-
-        if total_possible_information == 0:
-
-            return RedundancyResult(
-                selected=[],
-                discarded=[v.id for v in cleaned_viewpoints],
-                history=[],
-                retained_information_fraction=0.0
-            )
-
-        # ---------------------------------------------------------
-        # Begin with no viewpoints selected
-        # ---------------------------------------------------------
-
-        accumulated_information = np.zeros(
-            shape,
-            dtype=float
+    if not viewpoints:
+        return RedundancyCorrectionResult(
+            selected=(),
+            discarded=(),
+            score_vector=np.array([], dtype=np.float64),
+            total_score=0.0,
         )
 
-        remaining = cleaned_viewpoints.copy()
+    score_vector = build_score_vector(viewpoints)
 
-        selected_ids = []
-        history = []
+    total_score = float(np.sum(score_vector))
 
-        # ---------------------------------------------------------
-        # Greedy selection
-        # ---------------------------------------------------------
-
-        while remaining:
-
-            best_viewpoint = None
-            best_gain = -1
-            best_information = None
-
-            # Test every remaining viewpoint
-            for viewpoint in remaining:
-
-                # What would our information look like if we added it?
-                combined_information = np.maximum(
-                    accumulated_information,
-                    viewpoint.opf
-                )
-
-                # What information does it add?
-                marginal_information = (
-                    combined_information
-                    - accumulated_information
-                )
-
-                marginal_gain = np.sum(
-                    marginal_information
-                )
-
-                if marginal_gain > best_gain:
-
-                    best_gain = marginal_gain
-                    best_viewpoint = viewpoint
-                    best_information = combined_information
-
-            # -----------------------------------------------------
-            # Convert marginal contribution to fraction of ALL
-            # obtainable information
-            # -----------------------------------------------------
-
-            gain_fraction = (
-                best_gain
-                / total_possible_information
+    if total_score <= 0.0:
+        scores = tuple(
+            ViewpointScore(
+                identifier=viewpoint.viewpoint.identifier,
+                score=0.0,
+                fraction=0.0,
+                cumulative_fraction=0.0,
             )
-
-            # -----------------------------------------------------
-            # If even the BEST remaining viewpoint adds too little,
-            # all remaining viewpoints are redundant.
-            # -----------------------------------------------------
-
-            if gain_fraction < self.min_gain_fraction:
-                break
-
-            # -----------------------------------------------------
-            # Accept viewpoint
-            # -----------------------------------------------------
-
-            accumulated_information = best_information
-
-            selected_ids.append(
-                best_viewpoint.id
-            )
-
-            remaining.remove(
-                best_viewpoint
-            )
-
-            retained_fraction = (
-                np.sum(accumulated_information)
-                / total_possible_information
-            )
-
-            history.append(
-                SelectionRecord(
-                    viewpoint_id=best_viewpoint.id,
-                    marginal_gain=float(best_gain),
-                    marginal_gain_fraction=float(gain_fraction),
-                    retained_information_fraction=float(
-                        retained_fraction
-                    )
-                )
-            )
-
-            # -----------------------------------------------------
-            # Optional early stop once enough information retained
-            # -----------------------------------------------------
-
-            if retained_fraction >= self.target_retention:
-                break
-
-        discarded_ids = [
-            viewpoint.id
-            for viewpoint in remaining
-        ]
-
-        retained_fraction = (
-            np.sum(accumulated_information)
-            / total_possible_information
+            for viewpoint in viewpoints
         )
 
-        return RedundancyResult(
-            selected=selected_ids,
-            discarded=discarded_ids,
-            history=history,
-            retained_information_fraction=float(
-                retained_fraction
+        return RedundancyCorrectionResult(
+            selected=(),
+            discarded=scores,
+            score_vector=score_vector,
+            total_score=0.0,
+        )
+
+    # Highest-value viewpoints first.
+    order = np.argsort(score_vector)[::-1]
+
+    ranked: list[ViewpointScore] = []
+
+    cumulative_score = 0.0
+
+    for index in order:
+        score = float(score_vector[index])
+
+        fraction = score / total_score
+
+        cumulative_score += score
+
+        cumulative_fraction = (
+            cumulative_score / total_score
+        )
+
+        ranked.append(
+            ViewpointScore(
+                identifier=(
+                    viewpoints[index]
+                    .viewpoint
+                    .identifier
+                ),
+                score=score,
+                fraction=fraction,
+                cumulative_fraction=cumulative_fraction,
             )
         )
+
+    # Find the smallest prefix that reaches the required retention.
+    selected_count = len(ranked)
+
+    for i, result in enumerate(ranked):
+        if result.cumulative_fraction >= retention:
+            selected_count = i + 1
+            break
+
+    return RedundancyCorrectionResult(
+        selected=tuple(ranked[:selected_count]),
+        discarded=tuple(ranked[selected_count:]),
+        score_vector=score_vector,
+        total_score=total_score,
+    )
+
+
+
+
+
+def select_viewpoints_from_scores(
+    scores: np.ndarray,
+    retention: float = 0.95
+):
+    """
+    Rank viewpoint scores from highest to lowest and select the
+    smallest number required to reach the requested retention.
+    """
+
+    scores = np.asarray(scores, dtype=float)
+
+    if scores.size == 0:
+        return [], []
+
+    if np.any(scores < 0):
+        raise ValueError("Scores must not be negative.")
+
+    total_score = np.sum(scores)
+
+    if total_score == 0:
+        return [], []
+
+    # Fraction of total score contributed by each viewpoint
+    fractions = scores / total_score
+
+    # Sort highest score first
+    order = np.argsort(scores)[::-1]
+
+    ranked_scores = scores[order]
+    ranked_fractions = fractions[order]
+
+    cumulative_fractions = np.cumsum(ranked_fractions)
+
+    selected = []
+
+    for rank, index in enumerate(order):
+
+        selected.append(index)
+
+        if cumulative_fractions[rank] >= retention:
+            break
+
+    return selected, order
+
+
+if __name__ == "__main__":
+
+    # ---------------------------------------------------------
+    # FAKE VIEWPOINT SCORES
+    # ---------------------------------------------------------
+
+    viewpoint_names = np.array([
+        "VP_A",
+        "VP_B",
+        "VP_C",
+        "VP_D",
+        "VP_E",
+        "VP_F",
+        "VP_G",
+        "VP_H",
+    ])
+
+    scores = np.array([
+        82.0,   # VP_A
+        12.0,   # VP_B
+        47.0,   # VP_C
+        5.0,    # VP_D
+        31.0,   # VP_E
+        3.0,    # VP_F
+        18.0,   # VP_G
+        2.0,    # VP_H
+    ])
+
+    retention = 0.90
+
+    # ---------------------------------------------------------
+    # RUN REDUNDANCY CORRECTOR
+    # ---------------------------------------------------------
+
+    selected, ranking = select_viewpoints_from_scores(
+        scores,
+        retention
+    )
+
+    total_score = np.sum(scores)
+
+    print("\nVIEWPOINT RANKING")
+    print("-----------------")
+
+    cumulative = 0.0
+
+    for rank, index in enumerate(ranking, start=1):
+
+        fraction = scores[index] / total_score
+        cumulative += fraction
+
+        selected_marker = (
+            "KEEP"
+            if index in selected
+            else "DISCARD"
+        )
+
+        print(
+            f"{rank}. "
+            f"{viewpoint_names[index]} | "
+            f"score={scores[index]:.1f} | "
+            f"fraction={fraction:.2%} | "
+            f"cumulative={cumulative:.2%} | "
+            f"{selected_marker}"
+        )
+
+    print("\nSelected viewpoints:")
+
+    for index in selected:
+        print(
+            viewpoint_names[index],
+            scores[index]
+        )
+        
