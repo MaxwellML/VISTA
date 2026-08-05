@@ -99,6 +99,7 @@ def write_raster_crop(
     source_path: str | Path,
     bounds: tuple[float, float, float, float],
     output_path: str | Path,
+    coordinate_mode: str | None = None,
 ) -> RasterCropInfo:
     """Write the visible native-resolution DEM window as a GeoTIFF.
 
@@ -423,6 +424,7 @@ class RasterNavigationToolbar(NavigationToolbar):
 
         self.addSeparator()
 
+
         self.select_area_action = QAction("⬠", self)
         self.select_area_action.setCheckable(True)
         self.select_area_action.setToolTip(
@@ -584,11 +586,20 @@ class RasterView(QWidget):
 
         self._viewpoint_square_artists: dict[int, tuple[Any, Any]] = {}
 
+
+        # IDs of fast-mode cookie-cutter squares rejected by the post-OPF
+        # redundancy corrector. The squares remain visible and are drawn red.
+        self._discarded_viewpoint_square_identifiers: set[int] = set()
+
+
         self._selected_viewpoint_identifier: int | None = None
 
+
         self._viewpoint_region_results: dict[int, object] = {}
-        self._viewpoint_region_artists: dict[int, list[Any]] = {}
+        self._viewpoint_region_artists: dict[int, Any] = {}
         self._selected_viewpoint_region_identifier: int | None = None
+
+        self._discarded_viewpoint_region_identifiers: set[int] = set()
 
 
         self.figure = Figure(figsize=(8, 6), dpi=100)
@@ -622,6 +633,7 @@ class RasterView(QWidget):
 
         self._axes = None
         self._colourbar = None
+
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -840,10 +852,19 @@ class RasterView(QWidget):
     def set_viewpoint_regions(
         self,
         results: Mapping[int, object],
+        *,
+        discarded_identifiers: set[int] | None = None,
     ) -> None:
         """Store the cropped OPF regions and draw them as overlays."""
 
         self._viewpoint_region_results = dict(results)
+
+        # Copy the IDs so this view owns its current rendering state rather
+        # than depending on a mutable set held by MainWindow.
+        self._discarded_viewpoint_region_identifiers = set(
+            discarded_identifiers or ()
+        )
+
 
         if (
             self._selected_viewpoint_region_identifier
@@ -869,6 +890,10 @@ class RasterView(QWidget):
 
         self._viewpoint_region_results.clear()
         self._selected_viewpoint_region_identifier = None
+
+
+        self._discarded_viewpoint_region_identifiers.clear()
+
         self._remove_viewpoint_region_artists()
         self.canvas.draw_idle()
 
@@ -953,23 +978,44 @@ class RasterView(QWidget):
                 == self._selected_viewpoint_region_identifier
             )
 
+
+            discarded = (
+                identifier
+                in self._discarded_viewpoint_region_identifiers
+            )
+
             z = z + z_span * (0.012 if selected else 0.006)
 
             display_mapping = result.as_display_mapping()
+
+
+            # Retained regions keep their OPF colour map. Discarded regions
+            # use a solid red surface, while table selection still adds the
+            # existing yellow outline.
+            surface_arguments: dict[str, object] = {
+                "alpha": 1.0,
+                "linewidth": 0.7 if selected else 0.0,
+                "edgecolor": "#ffd54f" if selected else "none",
+                "antialiased": True,
+                "shade": True,
+            }
+
+            if discarded:
+                surface_arguments["color"] = "#d32f2f"
+            else:
+                surface_arguments.update(
+                    cmap=display_mapping["colour_map"],
+                    vmin=display_mapping["vmin"],
+                    vmax=display_mapping["vmax"],
+                )
 
             surface = self._axes.plot_surface(
                 x,
                 y,
                 z,
-                cmap=display_mapping["colour_map"],
-                vmin=display_mapping["vmin"],
-                vmax=display_mapping["vmax"],
-                alpha=1.0,
-                linewidth=0.7 if selected else 0.0,
-                edgecolor="#ffd54f" if selected else "none",
-                antialiased=True,
-                shade=True,
+                **surface_arguments,
             )
+
             self._viewpoint_region_artists[identifier] = surface
 
         self.canvas.draw_idle()
@@ -1135,6 +1181,9 @@ class RasterView(QWidget):
         bounds: tuple[float, float, float, float],
         identifier: int,
         source_count: int,
+        # --- REDUNDANCY CORRECTOR EDIT ---
+        discarded: bool = False,
+        # --- END REDUNDANCY CORRECTOR EDIT ---
     ) -> None:
         """Draw one fixed-grid square representing merged viewpoints."""
         if self._axes is None or not self._axes.images:
@@ -1144,12 +1193,25 @@ class RasterView(QWidget):
 
         xmin, ymin, xmax, ymax = bounds
 
+        # --- REDUNDANCY CORRECTOR EDIT ---
+        if discarded:
+            self._discarded_viewpoint_square_identifiers.add(identifier)
+        else:
+            self._discarded_viewpoint_square_identifiers.discard(identifier)
+
+        face_colour = "#c6282844" if discarded else "#5f7d8a33"
+        edge_colour = "#ff5252" if discarded else "#ffffff"
+        label_colour = "#ff8a80" if discarded else "#ffffff"
+        # --- END REDUNDANCY CORRECTOR EDIT ---
+
         square = RectanglePatch(
             (xmin, ymin),
             xmax - xmin,
             ymax - ymin,
-            facecolor="#5f7d8a33",
-            edgecolor="#ffffff",
+            # --- REDUNDANCY CORRECTOR EDIT ---
+            facecolor=face_colour,
+            edgecolor=edge_colour,
+            # --- END REDUNDANCY CORRECTOR EDIT ---
             linewidth=1.8,
             zorder=8,
         )
@@ -1160,7 +1222,9 @@ class RasterView(QWidget):
             ((xmin + xmax) / 2.0, (ymin + ymax) / 2.0),
             ha="center",
             va="center",
-            color="#ffffff",
+            # --- REDUNDANCY CORRECTOR EDIT ---
+            color=label_colour,
+            # --- END REDUNDANCY CORRECTOR EDIT ---
             fontsize=9,
             fontweight="bold",
             zorder=9,
@@ -1197,18 +1261,37 @@ class RasterView(QWidget):
         ):
             selected = viewpoint_identifier == identifier
 
+
+            # Selection still uses yellow. When selection ends, restore the
+            # square to either normal styling or discarded-red styling.
+            discarded = (
+                viewpoint_identifier
+                in self._discarded_viewpoint_square_identifiers
+            )
+
+            normal_edge_colour = (
+                "#ff5252" if discarded else "#ffffff"
+            )
+            normal_face_colour = (
+                "#c6282844" if discarded else "#5f7d8a33"
+            )
+            normal_label_colour = (
+                "#ff8a80" if discarded else "#ffffff"
+            )
+
             square.set_linewidth(3.0 if selected else 1.8)
             square.set_edgecolor(
-                "#ffd54f" if selected else "#ffffff"
+                "#ffd54f" if selected else normal_edge_colour
             )
             square.set_facecolor(
-                "#ffd54f44" if selected else "#5f7d8a33"
+                "#ffd54f44" if selected else normal_face_colour
             )
 
             label.set_color(
-                "#ffd54f" if selected else "#ffffff"
+                "#ffd54f" if selected else normal_label_colour
             )
             label.set_fontsize(10 if selected else 9)
+  
         self.canvas.draw_idle()
         
     def clear_viewpoint_markers(self) -> None:
@@ -1227,6 +1310,11 @@ class RasterView(QWidget):
 
         self._viewpoint_artists.clear()
         self._viewpoint_square_artists.clear()
+
+
+        self._discarded_viewpoint_square_identifiers.clear()
+   
+
         self._selected_viewpoint_identifier = None
         self.toolbar.set_viewpoint_clear_enabled(False)
         self.canvas.draw_idle()

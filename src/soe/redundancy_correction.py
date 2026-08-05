@@ -1,12 +1,18 @@
-from __future__ import annotations
-"""Reduce viewpoint sets using aggregate OPF contribution."""
-"""DOES NOT CURRENTLY ACCOUNT FOR OVERLAP."""
+"""Reduce viewpoint sets using aggregate OPF contribution.
 
+This first version deliberately DOES NOT account for overlap between viewpoint
+cutouts. Each cutout is collapsed to one aggregate score, viewpoints are ranked
+by that score, and the smallest ranked prefix that reaches the requested
+retention fraction is kept.
+"""
+
+from __future__ import annotations
 
 from dataclasses import dataclass
 
 import numpy as np
 
+from .viewpoint import ViewpointOPFResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,11 +38,10 @@ class RedundancyCorrectionResult:
 def aggregate_viewpoint_score(
     viewpoint: ViewpointOPFResult,
 ) -> float:
-    """
-    Collapse one viewpoint OPF cutout into one aggregate score.
+    """Collapse one viewpoint OPF cutout into one aggregate score.
 
-    Only valid, positive OPF values contribute. Negative OPF values
-    represent no useful observational contribution for this purpose.
+    Only valid, finite, positive OPF values contribute. Negative OPF values
+    represent no useful observational contribution for this first version.
     """
 
     field = np.asarray(
@@ -49,6 +54,11 @@ def aggregate_viewpoint_score(
         dtype=bool,
     )
 
+    if field.shape != valid_mask.shape:
+        raise ValueError(
+            "The viewpoint OPF field and valid mask must have the same shape."
+        )
+
     values = field[
         valid_mask & np.isfinite(field)
     ]
@@ -56,8 +66,8 @@ def aggregate_viewpoint_score(
     if values.size == 0:
         return 0.0
 
-    # We are measuring useful information, not allowing poor/negative
-    # areas to cancel useful areas elsewhere in the cutout.
+    # We are measuring useful information, not allowing poor/negative areas to
+    # cancel useful areas elsewhere in the cutout.
     useful_values = np.clip(
         values,
         0.0,
@@ -70,10 +80,9 @@ def aggregate_viewpoint_score(
 def build_score_vector(
     viewpoints: list[ViewpointOPFResult],
 ) -> np.ndarray:
-    """
-    Return one aggregate OPF score for every viewpoint.
+    """Return one aggregate OPF score for every viewpoint.
 
-    Position i in the output corresponds to viewpoints[i].
+    Position ``i`` in the output corresponds to ``viewpoints[i]``.
     """
 
     return np.asarray(
@@ -90,15 +99,14 @@ def correct_redundancy(
     *,
     retention: float = 0.95,
 ) -> RedundancyCorrectionResult:
-    """
-    Select the smallest number of highest-scoring viewpoints required
-    to account for the requested fraction of aggregate viewpoint score.
+    """Select the smallest highest-scoring subset meeting ``retention``.
 
-    Example:
-        retention=0.95
+    ``retention=0.95`` means: rank the aggregate viewpoint scores from highest
+    to lowest, then keep the shortest prefix whose cumulative score accounts
+    for at least 95% of the summed candidate-viewpoint score.
 
-    means retain enough viewpoints to account for at least 95% of the
-    total score represented by the candidate score vector.
+    This is score-concentration pruning, not yet overlap-aware marginal-gain
+    pruning.
     """
 
     if not 0.0 < retention <= 1.0:
@@ -115,7 +123,6 @@ def correct_redundancy(
         )
 
     score_vector = build_score_vector(viewpoints)
-
     total_score = float(np.sum(score_vector))
 
     if total_score <= 0.0:
@@ -140,27 +147,18 @@ def correct_redundancy(
     order = np.argsort(score_vector)[::-1]
 
     ranked: list[ViewpointScore] = []
-
     cumulative_score = 0.0
 
     for index in order:
         score = float(score_vector[index])
-
         fraction = score / total_score
 
         cumulative_score += score
-
-        cumulative_fraction = (
-            cumulative_score / total_score
-        )
+        cumulative_fraction = cumulative_score / total_score
 
         ranked.append(
             ViewpointScore(
-                identifier=(
-                    viewpoints[index]
-                    .viewpoint
-                    .identifier
-                ),
+                identifier=viewpoints[index].viewpoint.identifier,
                 score=score,
                 fraction=fraction,
                 cumulative_fraction=cumulative_fraction,
@@ -183,47 +181,42 @@ def correct_redundancy(
     )
 
 
-
-
-
 def select_viewpoints_from_scores(
     scores: np.ndarray,
-    retention: float = 0.95
-):
-    """
-    Rank viewpoint scores from highest to lowest and select the
-    smallest number required to reach the requested retention.
-    """
+    retention: float = 0.95,
+) -> tuple[list[int], np.ndarray]:
+    """Small standalone helper for testing the ranking logic with fake scores."""
 
     scores = np.asarray(scores, dtype=float)
 
+    if not 0.0 < retention <= 1.0:
+        raise ValueError(
+            "retention must be greater than 0 and at most 1."
+        )
+
     if scores.size == 0:
-        return [], []
+        return [], np.array([], dtype=int)
+
+    if np.any(~np.isfinite(scores)):
+        raise ValueError("Scores must contain only finite values.")
 
     if np.any(scores < 0):
         raise ValueError("Scores must not be negative.")
 
-    total_score = np.sum(scores)
+    total_score = float(np.sum(scores))
 
-    if total_score == 0:
-        return [], []
+    if total_score <= 0.0:
+        return [], np.argsort(scores)[::-1]
 
-    # Fraction of total score contributed by each viewpoint
     fractions = scores / total_score
-
-    # Sort highest score first
     order = np.argsort(scores)[::-1]
-
-    ranked_scores = scores[order]
     ranked_fractions = fractions[order]
-
     cumulative_fractions = np.cumsum(ranked_fractions)
 
-    selected = []
+    selected: list[int] = []
 
     for rank, index in enumerate(order):
-
-        selected.append(index)
+        selected.append(int(index))
 
         if cumulative_fractions[rank] >= retention:
             break
@@ -231,77 +224,3 @@ def select_viewpoints_from_scores(
     return selected, order
 
 
-if __name__ == "__main__":
-
-    # ---------------------------------------------------------
-    # FAKE VIEWPOINT SCORES
-    # ---------------------------------------------------------
-
-    viewpoint_names = np.array([
-        "VP_A",
-        "VP_B",
-        "VP_C",
-        "VP_D",
-        "VP_E",
-        "VP_F",
-        "VP_G",
-        "VP_H",
-    ])
-
-    scores = np.array([
-        82.0,   # VP_A
-        12.0,   # VP_B
-        47.0,   # VP_C
-        5.0,    # VP_D
-        31.0,   # VP_E
-        3.0,    # VP_F
-        18.0,   # VP_G
-        2.0,    # VP_H
-    ])
-
-    retention = 0.90
-
-    # ---------------------------------------------------------
-    # RUN REDUNDANCY CORRECTOR
-    # ---------------------------------------------------------
-
-    selected, ranking = select_viewpoints_from_scores(
-        scores,
-        retention
-    )
-
-    total_score = np.sum(scores)
-
-    print("\nVIEWPOINT RANKING")
-    print("-----------------")
-
-    cumulative = 0.0
-
-    for rank, index in enumerate(ranking, start=1):
-
-        fraction = scores[index] / total_score
-        cumulative += fraction
-
-        selected_marker = (
-            "KEEP"
-            if index in selected
-            else "DISCARD"
-        )
-
-        print(
-            f"{rank}. "
-            f"{viewpoint_names[index]} | "
-            f"score={scores[index]:.1f} | "
-            f"fraction={fraction:.2%} | "
-            f"cumulative={cumulative:.2%} | "
-            f"{selected_marker}"
-        )
-
-    print("\nSelected viewpoints:")
-
-    for index in selected:
-        print(
-            viewpoint_names[index],
-            scores[index]
-        )
-        

@@ -22,6 +22,9 @@ from typing import Any
 
 import numpy as np
 
+import rasterio
+
+
 from pyproj import Transformer
 from PySide6.QtCore import QThreadPool, Qt
 from PySide6.QtGui import QAction, QActionGroup
@@ -57,11 +60,19 @@ from .worker import FunctionWorker
 from SOE.downsample_to_resolution import downsample_to_resolution
 
 
+from SOE.redundancy_correction import correct_redundancy
+
+
 from SOE.viewpoint import (
     ViewpointRegion,
     ViewpointOPFResult,
     build_viewpoint_opf,
 )
+
+
+# --- CHANGED: machine-readable GeoTIFF coordinate mode ---
+UNREAL_LOCAL_COORDINATE_MODE = "unreal_local"
+# --- END CHANGED ---
 
 
 ModuleRunner = Callable[..., object]
@@ -106,6 +117,7 @@ def run_selected_pipeline_on_visible_dem_crop(
     visible_bounds: tuple[float, float, float, float],
     selected_modules: SelectedModules,
     opf_runner: ModuleRunner,
+    coordinate_mode: str | None = None,
 ) -> PipelineOutput:
     """Run the selected modules and OPF on one shared temporary DEM crop.
 
@@ -122,6 +134,7 @@ def run_selected_pipeline_on_visible_dem_crop(
             source_path=source_dem_path,
             bounds=visible_bounds,
             output_path=Path(directory) / "visible_dem.tif",
+            coordinate_mode=coordinate_mode,
         )
 
         component_results: dict[str, object] = {}
@@ -203,8 +216,17 @@ class MainWindow(QMainWindow):
         self._dem_to_wgs84: Transformer | None = None
         self._wgs84_to_dem: Transformer | None = None
 
+
+        self._dem_is_unreal_local = False
+        self._dem_tags: dict[str, str] = {}
+
         self.viewpoint_radius_m = 100.0
         self.viewpoint_results: dict[int, ViewpointOPFResult] = {}
+
+        # Fast mode keeps the original cookie-cutter regions visible, but
+        # records which regions fall outside the retained aggregate OPF score.
+        self.redundancy_retention = 0.95
+        self.discarded_viewpoint_identifiers: set[int] = set()
 
         self._build_menu()
         self._build_interface()
@@ -218,6 +240,51 @@ class MainWindow(QMainWindow):
             return self.downsampled_viewpoints
 
         return self.original_viewpoints
+
+
+    def _stored_coordinates_from_map_point(
+        self,
+        map_x: float,
+        map_y: float,
+    ) -> tuple[float, float]:
+        """Return values for the legacy longitude/latitude storage fields.
+
+        For an Unreal-local DEM, the existing fields temporarily store X and
+        Y respectively so the rest of the viewpoint pipeline can remain
+        unchanged. The real analysis coordinates remain ``map_x``/``map_y``.
+        """
+
+        if self._dem_is_unreal_local:
+            return map_x, map_y
+
+        if self._dem_to_wgs84 is None:
+            raise RuntimeError(
+                "The DEM coordinate transformer has not been created."
+            )
+
+        return self._dem_to_wgs84.transform(map_x, map_y)
+
+    def _viewpoint_table_coordinate_headers(self) -> tuple[str, str]:
+        """Return the two coordinate-column labels for the active DEM."""
+
+        if self._dem_is_unreal_local:
+            # The table retains its existing Y-then-X value order.
+            return "Y (m)", "X (m)"
+
+        return "Latitude", "Longitude"
+
+    def _format_map_position(self, map_x: float, map_y: float) -> str:
+        """Format one viewpoint position for status messages."""
+
+        if self._dem_is_unreal_local:
+            return f"X={map_x:.3f} m, Y={map_y:.3f} m"
+
+        longitude, latitude = self._stored_coordinates_from_map_point(
+            map_x,
+            map_y,
+        )
+        return f"{latitude:.6f}, {longitude:.6f}"
+
 
     def _build_menu(self) -> None:
         """Create the File and Mode menus."""
@@ -342,9 +409,15 @@ class MainWindow(QMainWindow):
         viewpoints_layout.addWidget(self.mode_warning_label)
 
         self.viewpoint_table = QTableWidget(0, 3)
-        self.viewpoint_table.setHorizontalHeaderLabels(
-            ["#", "Latitude", "Longitude"]
+
+        # --- CHANGED: show X/Y for Unreal-local DEMs and lat/lon otherwise.
+        second_header, third_header = (
+            self._viewpoint_table_coordinate_headers()
         )
+        self.viewpoint_table.setHorizontalHeaderLabels(
+            ["#", second_header, third_header]
+        )
+        # --- END CHANGED ---
         self.viewpoint_table.verticalHeader().setVisible(False)
         self.viewpoint_table.setEditTriggers(
             QAbstractItemView.EditTrigger.NoEditTriggers
@@ -394,12 +467,23 @@ class MainWindow(QMainWindow):
         self.ndvi_checkbox = QCheckBox("NDVI")
         botanical_layout.addWidget(self.ndvi_checkbox)
 
+        redundancy_group = QGroupBox("Redundancy correction")
+        redundancy_layout = QVBoxLayout(redundancy_group)
+
+        self.redundancy_checkbox = QCheckBox(
+            "Apply redundancy correction"
+        )
+        self.redundancy_checkbox.setChecked(False)
+
+        redundancy_layout.addWidget(self.redundancy_checkbox)
+
         self.los_checkbox.setChecked(True)
-        self.ndvi_checkbox.setChecked(True)
-        self.obstacle_checkbox.setChecked(True)
+        self.ndvi_checkbox.setChecked(False)
+        self.obstacle_checkbox.setChecked(False)
 
         module_layout.addWidget(geometric_group)
         module_layout.addWidget(botanical_group)
+        module_layout.addWidget(redundancy_group)
 
         self.run_selected_button = QPushButton("Run selected modules")
         self.run_selected_button.clicked.connect(self.run_selected_modules)
@@ -408,6 +492,7 @@ class MainWindow(QMainWindow):
         self.los_checkbox.toggled.connect(self._update_controls)
         self.ndvi_checkbox.toggled.connect(self._update_controls)
         self.obstacle_checkbox.toggled.connect(self._update_controls)
+        self.redundancy_checkbox.toggled.connect(self._update_controls)
 
         left_layout.addWidget(module_group)
 
@@ -572,6 +657,10 @@ class MainWindow(QMainWindow):
 
         self.analysis_mode = mode
 
+        # Discard decisions only apply to fast-mode merged regions.
+        if mode != "fast":
+            self.discarded_viewpoint_identifiers.clear()
+
         if mode == "fast":
             self._rebuild_downsampled_viewpoints()
 
@@ -595,11 +684,23 @@ class MainWindow(QMainWindow):
         """Derive merged square records from the retained original points."""
         self.downsampled_viewpoints.clear()
 
+        # --- REDUNDANCY CORRECTOR EDIT ---
+        # The cookie-cutter IDs are regenerated here, so any previous discard
+        # decisions are stale until the OPF cutouts are scored again.
+        self.discarded_viewpoint_identifiers.clear()
+        # --- END REDUNDANCY CORRECTOR EDIT ---
+
         if not self.original_viewpoints:
             return
 
-        if self._dem_to_wgs84 is None:
+        #an Unreal-local DEM deliberately has no WGS84
+        # transformer, but its map coordinates are already usable directly.
+        if (
+            not self._dem_is_unreal_local
+            and self._dem_to_wgs84 is None
+        ):
             return
+
 
         points = np.asarray(
             [
@@ -624,10 +725,12 @@ class MainWindow(QMainWindow):
         )
 
         for identifier, region in enumerate(merged_regions, start=1):
-            longitude, latitude = self._dem_to_wgs84.transform(
+            # --- CHANGED: keep local Unreal X/Y values unchanged.
+            longitude, latitude = self._stored_coordinates_from_map_point(
                 region.x,
                 region.y,
             )
+            # --- END CHANGED ---
 
             source_identifiers = tuple(
                 self.original_viewpoints[index].identifier
@@ -656,13 +759,18 @@ class MainWindow(QMainWindow):
             self.viewpoint_table.setRowCount(0)
             self.dem_view.clear_viewpoint_markers()
 
+            # --- CHANGED: table labels follow the DEM coordinate mode.
+            second_header, third_header = (
+                self._viewpoint_table_coordinate_headers()
+            )
             self.viewpoint_table.setHorizontalHeaderLabels(
                 [
                     "Region" if self.analysis_mode == "fast" else "#",
-                    "Latitude",
-                    "Longitude",
+                    second_header,
+                    third_header,
                 ]
             )
+            # --- END CHANGED ---
 
             for viewpoint in viewpoints:
                 if viewpoint.square_bounds is None:
@@ -673,11 +781,19 @@ class MainWindow(QMainWindow):
                     )
                     identifier_text = str(viewpoint.identifier)
                 else:
+
+                    # Keep every cookie-cutter square on the DEM. Discarded
+                    # regions are visualised in red rather than removed.
                     self.dem_view.add_viewpoint_square(
                         bounds=viewpoint.square_bounds,
                         identifier=viewpoint.identifier,
                         source_count=len(viewpoint.source_identifiers),
+                        discarded=(
+                            viewpoint.identifier
+                            in self.discarded_viewpoint_identifiers
+                        ),
                     )
+
                     identifier_text = (
                         f"{viewpoint.identifier} "
                         f"({len(viewpoint.source_identifiers)})"
@@ -735,18 +851,21 @@ class MainWindow(QMainWindow):
         if self.target_geometry is None:
             return
 
-        if self._dem_to_wgs84 is None:
+        map_x, map_y = point
+
+        # --- CHANGED: local Unreal X/Y is already in the required map frame.
+        try:
+            longitude, latitude = self._stored_coordinates_from_map_point(
+                map_x,
+                map_y,
+            )
+        except RuntimeError as error:
             self._show_error(
                 "Coordinate conversion unavailable",
-                "The DEM coordinate transformer has not been created.",
+                str(error),
             )
             return
-
-        map_x, map_y = point
-        longitude, latitude = self._dem_to_wgs84.transform(
-            map_x,
-            map_y,
-        )
+        # --- END CHANGED ---
 
         self._store_viewpoint(
             map_x=map_x,
@@ -800,10 +919,12 @@ class MainWindow(QMainWindow):
                     self.viewpoint_table.selectRow(row)
                     break
 
+        #use X/Y wording for an Unreal-local DEM.
         self.status_label.setText(
             f"Original viewpoint {identifier} added at "
-            f"{latitude:.6f}, {longitude:.6f}."
+            f"{self._format_map_position(map_x, map_y)}."
         )
+
 
     def _on_viewpoint_table_selection_changed(self) -> None:
         """Highlight the map item linked to the selected table row."""
@@ -840,19 +961,24 @@ class MainWindow(QMainWindow):
         if viewpoint is None:
             return
 
+        # --- CHANGED: status text follows the active coordinate mode.
+        location_text = self._format_map_position(
+            viewpoint.map_x,
+            viewpoint.map_y,
+        )
+
         if viewpoint.is_merged:
             self.status_label.setText(
                 f"Merged viewpoint {identifier} represents "
                 f"{len(viewpoint.source_identifiers)} original "
-                f"viewpoints; centre at {viewpoint.latitude:.6f}, "
-                f"{viewpoint.longitude:.6f}."
+                f"viewpoints; centre at {location_text}."
             )
         else:
             self.status_label.setText(
                 f"Original viewpoint {identifier} selected at "
-                f"{viewpoint.latitude:.6f}, "
-                f"{viewpoint.longitude:.6f}."
+                f"{location_text}."
             )
+        # --- END CHANGED ---
 
     def _clear_viewpoints(self) -> None:
         """Clear both exact and downsampled viewpoint representations."""
@@ -860,13 +986,17 @@ class MainWindow(QMainWindow):
         self.dem_view.set_viewpoint_selection_active(False)
         self.original_viewpoints.clear()
         self.downsampled_viewpoints.clear()
+
+
+        self.discarded_viewpoint_identifiers.clear()
+
         self._refresh_viewpoint_preview()
 
         self.viewpoint_results.clear()
         self.opf_view.clear_viewpoint_regions()
 
     def import_viewpoints_csv(self) -> None:
-        """Import latitude/longitude coordinates from a CSV file."""
+        """Import geographic or Unreal-local coordinates from a CSV file."""
 
         if self.target_geometry is None:
             self._show_error(
@@ -875,12 +1005,17 @@ class MainWindow(QMainWindow):
             )
             return
 
-        if self._wgs84_to_dem is None:
+        #Unreal-local CSVs contain X/Y and need no transformer.
+        if (
+            not self._dem_is_unreal_local
+            and self._wgs84_to_dem is None
+        ):
             self._show_error(
                 "CSV import unavailable",
                 "Load a georeferenced DEM first.",
             )
             return
+
 
         filename, _ = QFileDialog.getOpenFileName(
             self,
@@ -912,49 +1047,87 @@ class MainWindow(QMainWindow):
                     heading.strip().lower(): heading
                     for heading in reader.fieldnames
                 }
-                latitude_heading = (
-                    headings.get("lat")
-                    or headings.get("latitude")
-                )
-                longitude_heading = (
-                    headings.get("lon")
-                    or headings.get("longitude")
-                )
 
-                if latitude_heading is None or longitude_heading is None:
-                    raise ValueError(
-                        "The CSV must contain lat and lon columns."
+                # --- CHANGED: choose CSV columns from the DEM coordinate mode.
+                if self._dem_is_unreal_local:
+                    x_heading = (
+                        headings.get("x")
+                        or headings.get("map_x")
+                        or headings.get("easting")
+                    )
+                    y_heading = (
+                        headings.get("y")
+                        or headings.get("map_y")
+                        or headings.get("northing")
                     )
 
-                for line_number, row in enumerate(reader, start=2):
-                    try:
-                        latitude = float(row[latitude_heading])
-                        longitude = float(row[longitude_heading])
-                    except (KeyError, TypeError, ValueError) as error:
+                    if x_heading is None or y_heading is None:
                         raise ValueError(
-                            "Invalid coordinates on CSV line "
-                            f"{line_number}."
-                        ) from error
-
-                    if not -90.0 <= latitude <= 90.0:
-                        raise ValueError(
-                            "Latitude outside -90…90 on "
-                            f"line {line_number}."
+                            "An Unreal-local CSV must contain x and y columns."
                         )
 
-                    if not -180.0 <= longitude <= 180.0:
+                    for line_number, row in enumerate(reader, start=2):
+                        try:
+                            map_x = float(row[x_heading])
+                            map_y = float(row[y_heading])
+                        except (KeyError, TypeError, ValueError) as error:
+                            raise ValueError(
+                                "Invalid X/Y coordinates on CSV line "
+                                f"{line_number}."
+                            ) from error
+
+                        # The legacy fields temporarily carry X and Y.
+                        pending.append((map_x, map_y, map_x, map_y))
+
+                else:
+                    latitude_heading = (
+                        headings.get("lat")
+                        or headings.get("latitude")
+                    )
+                    longitude_heading = (
+                        headings.get("lon")
+                        or headings.get("longitude")
+                    )
+
+                    if (
+                        latitude_heading is None
+                        or longitude_heading is None
+                    ):
                         raise ValueError(
-                            "Longitude outside -180…180 on "
-                            f"line {line_number}."
+                            "The CSV must contain lat and lon columns."
                         )
 
-                    map_x, map_y = self._wgs84_to_dem.transform(
-                        longitude,
-                        latitude,
-                    )
-                    pending.append(
-                        (map_x, map_y, longitude, latitude)
-                    )
+                    for line_number, row in enumerate(reader, start=2):
+                        try:
+                            latitude = float(row[latitude_heading])
+                            longitude = float(row[longitude_heading])
+                        except (KeyError, TypeError, ValueError) as error:
+                            raise ValueError(
+                                "Invalid coordinates on CSV line "
+                                f"{line_number}."
+                            ) from error
+
+                        if not -90.0 <= latitude <= 90.0:
+                            raise ValueError(
+                                "Latitude outside -90…90 on "
+                                f"line {line_number}."
+                            )
+
+                        if not -180.0 <= longitude <= 180.0:
+                            raise ValueError(
+                                "Longitude outside -180…180 on "
+                                f"line {line_number}."
+                            )
+
+                        assert self._wgs84_to_dem is not None
+                        map_x, map_y = self._wgs84_to_dem.transform(
+                            longitude,
+                            latitude,
+                        )
+                        pending.append(
+                            (map_x, map_y, longitude, latitude)
+                        )
+                # --- END CHANGED ---
 
         except (OSError, ValueError) as error:
             self._show_error("CSV import failed", str(error))
@@ -980,6 +1153,8 @@ class MainWindow(QMainWindow):
         if self.opf_result is None:
             self.viewpoint_results.clear()
             self.opf_view.clear_viewpoint_regions()
+            self.discarded_viewpoint_identifiers.clear()
+
             return
 
         results: dict[int, ViewpointOPFResult] = {}
@@ -1009,7 +1184,67 @@ class MainWindow(QMainWindow):
             results[viewpoint.identifier] = result
 
         self.viewpoint_results = results
-        self.opf_view.set_viewpoint_regions(results)
+
+
+        self.discarded_viewpoint_identifiers.clear()
+
+        if (self.analysis_mode == "fast" and self.redundancy_checkbox.isChecked() and results):
+            correction = correct_redundancy(
+                list(results.values()),
+                retention=self.redundancy_retention,
+            )
+
+            discarded_labels = {
+                viewpoint_score.identifier
+                for viewpoint_score in correction.discarded
+            }
+
+            # The corrector stores the ViewpointRegion label (for example
+            # "Viewpoint 3"). Match that label back to the GUI integer ID
+            # without parsing the string.
+            self.discarded_viewpoint_identifiers = {
+                identifier
+                for identifier, result in results.items()
+                if result.viewpoint.identifier in discarded_labels
+            }
+
+            print("\nREDUNDANCY CORRECTION")
+            print("---------------------")
+            print(
+                f"Retention target: {self.redundancy_retention:.1%}"
+            )
+            print(
+                f"Retained: {len(correction.selected)} / "
+                f"{len(correction.selected) + len(correction.discarded)}"
+            )
+
+            for viewpoint_score in correction.selected:
+                print(
+                    f"KEEP    {viewpoint_score.identifier} | "
+                    f"score={viewpoint_score.score:.2f} | "
+                    f"fraction={viewpoint_score.fraction:.2%} | "
+                    f"cumulative="
+                    f"{viewpoint_score.cumulative_fraction:.2%}"
+                )
+
+            for viewpoint_score in correction.discarded:
+                print(
+                    f"DISCARD {viewpoint_score.identifier} | "
+                    f"score={viewpoint_score.score:.2f}"
+                )
+
+        # Redraw the DEM overlay now that discard decisions are known.
+        self._refresh_viewpoint_preview()
+
+
+
+        # Pass fast-mode discard decisions to the OPF renderer so rejected
+        # viewpoint cutouts are drawn red there as well as on the DEM.
+        self.opf_view.set_viewpoint_regions(
+            results,
+            discarded_identifiers=self.discarded_viewpoint_identifiers,
+        )
+
 
 
     def choose_dem(self) -> None:
@@ -1046,16 +1281,48 @@ class MainWindow(QMainWindow):
         self.dem_transform = self.dem_view.source_transform
         self.dem_crs = self.dem_view.source_crs
 
-        self._dem_to_wgs84 = Transformer.from_crs(
-            self.dem_crs,
-            "EPSG:4326",
-            always_xy=True,
+
+        with rasterio.open(path) as source:
+            self._dem_tags = source.tags()
+
+        coordinate_mode = self._dem_tags.get(
+            "coordinate_mode",
+            "",
+        ).strip().lower()
+
+        self._dem_is_unreal_local = (
+            coordinate_mode == UNREAL_LOCAL_COORDINATE_MODE
         )
-        self._wgs84_to_dem = Transformer.from_crs(
-            "EPSG:4326",
-            self.dem_crs,
-            always_xy=True,
-        )
+
+        if self._dem_is_unreal_local:
+            # The DEM coordinates already equal Unreal X/Y metres.
+            self._dem_to_wgs84 = None
+            self._wgs84_to_dem = None
+        else:
+            try:
+                self._dem_to_wgs84 = Transformer.from_crs(
+                    self.dem_crs,
+                    "EPSG:4326",
+                    always_xy=True,
+                )
+                self._wgs84_to_dem = Transformer.from_crs(
+                    "EPSG:4326",
+                    self.dem_crs,
+                    always_xy=True,
+                )
+            except Exception as error:  # noqa: BLE001 - present CRS errors
+                self._dem_to_wgs84 = None
+                self._wgs84_to_dem = None
+                self._show_error(
+                    "Coordinate conversion unavailable",
+                    str(error),
+                )
+                return
+
+        # Refresh the empty table so its headings immediately show X/Y or
+        # latitude/longitude for the newly loaded DEM.
+        self._refresh_viewpoint_preview()
+
 
         self.visibility_result = None
         self.botanical_result = None
@@ -1072,9 +1339,18 @@ class MainWindow(QMainWindow):
         self.dem_path_label.setText(str(path))
         self.dem_path_label.setToolTip(str(path))
         self.tabs.setCurrentWidget(self.dem_view)
-        self.status_label.setText(
-            "DEM loaded. Define a region of interest to enable viewpoints."
-        )
+
+        if self._dem_is_unreal_local:
+            self.status_label.setText(
+                "Unreal-local DEM loaded. X/Y coordinates are already in "
+                "metres; define a region of interest to enable viewpoints."
+            )
+        else:
+            self.status_label.setText(
+                "DEM loaded. Define a region of interest to enable "
+                "viewpoints."
+            )
+
         self._update_controls()
 
     def run_selected_modules(self) -> None:
@@ -1174,6 +1450,7 @@ class MainWindow(QMainWindow):
             visible_bounds=visible_bounds,
             selected_modules=selected_modules,
             opf_runner=self.opf_runner,
+            coordinate_mode=self._dem_tags.get("coordinate_mode"),
         )
         self._workers.add(worker)
 
@@ -1429,6 +1706,12 @@ class MainWindow(QMainWindow):
 
         self.dem_view.set_area_selection_enabled(
             has_dem and not is_busy
+        )
+
+        self.redundancy_checkbox.setEnabled(
+            has_dem
+            and self.analysis_mode == "fast"
+            and not is_busy
         )
 
     def _show_missing_dem(self) -> None:
