@@ -214,17 +214,39 @@ def build_visibility_field(
         raise FileNotFoundError(f"DEM does not exist: {dem_path}")
 
     with rasterio.open(dem_path) as source:
+
         if source.count < 1:
             raise ValueError("The DEM contains no raster bands.")
 
-        if source.crs is None:
-            raise ValueError("The DEM has no coordinate reference system.")
+  
+        coordinate_mode = (
+            source.tags()
+            .get("coordinate_mode", "")
+            .strip()
+            .lower()
+        )
+        source_crs = source.crs
 
-        if not source.crs.is_projected:
-            raise ValueError(
-                "GDAL viewsheds require a projected DEM for meaningful "
-                "distance and visibility results."
-            )
+        if coordinate_mode != "unreal_local":
+            if source_crs is None:
+                raise ValueError(
+                    "The DEM has no coordinate reference system."
+                )
+
+            if not source_crs.is_projected:
+                raise ValueError(
+                    "GDAL viewsheds require a projected DEM for meaningful "
+                    "distance and visibility results."
+                )
+
+        # Unreal-local coordinates are flat Cartesian metre coordinates, so
+        # Earth curvature/refraction must not be applied.
+        effective_curvature_coefficient = (
+            0.0
+            if coordinate_mode == "unreal_local"
+            else curvature_coefficient
+        )
+
 
         dem = source.read(1, masked=True).astype(np.float64)
         dem_shape = (source.height, source.width)
@@ -281,10 +303,18 @@ def build_visibility_field(
     visible_count = np.zeros(dem_shape, dtype=np.float64)
 
     gdal.UseExceptions()
-    dataset = gdal.Open(str(dem_path), gdal.GA_ReadOnly)
 
-    if dataset is None:
-        raise RuntimeError(f"GDAL could not open DEM: {dem_path}")
+    #for Unreal-local DEMs, ViewshedGenerate receives a temporary
+    # in-memory copy with the CRS removed. Older GDAL versions try to obtain an
+    # ellipsoid from any attached CRS; an Unreal engineering CRS has none.
+    #
+    # The GeoTransform is retained, so GDAL still has the local X/Y geometry
+    # and metre pixel spacing needed by the viewshed algorithm.
+    dataset = _open_gdal_viewshed_dataset(
+        dem_path,
+        strip_crs=(coordinate_mode == "unreal_local"),
+    )
+
 
     try:
         band = dataset.GetRasterBand(1)
@@ -307,7 +337,9 @@ def build_visibility_field(
                 temporary_observer_height=target_height_m,
                 temporary_target_height=observer_height_m,
                 max_distance_m=max_distance_m,
-                curvature_coefficient=curvature_coefficient,
+                # --- CHANGED: Unreal-local viewsheds are flat. ---
+                curvature_coefficient=effective_curvature_coefficient,
+                # --- END CHANGED ---
             )
 
             try:
@@ -387,6 +419,90 @@ def save_visibility_field(
         )
 
     return output_path
+
+
+
+
+def _open_gdal_viewshed_dataset(
+    dem_path: Path,
+    *,
+    strip_crs: bool,
+) -> Any:
+    """
+    Open a DEM for GDAL ViewshedGenerate.
+
+    Normal GIS DEMs are returned directly. For an Unreal-local DEM, a temporary
+    GDAL MEM copy is created with the same raster values and GeoTransform but
+    with no CRS. This prevents GDAL/PROJ from trying to obtain an Earth
+    ellipsoid from an engineering/local Unreal CRS.
+    """
+    source_dataset = gdal.Open(str(dem_path), gdal.GA_ReadOnly)
+
+    if source_dataset is None:
+        raise RuntimeError(f"GDAL could not open DEM: {dem_path}")
+
+    if not strip_crs:
+        return source_dataset
+
+    source_band = source_dataset.GetRasterBand(1)
+
+    if source_band is None:
+        source_dataset = None
+        raise RuntimeError("GDAL could not access DEM band 1.")
+
+    memory_driver = gdal.GetDriverByName("MEM")
+
+    if memory_driver is None:
+        source_dataset = None
+        raise RuntimeError("GDAL MEM driver is unavailable.")
+
+    local_dataset = memory_driver.Create(
+        "",
+        source_dataset.RasterXSize,
+        source_dataset.RasterYSize,
+        1,
+        source_band.DataType,
+    )
+
+    if local_dataset is None:
+        source_dataset = None
+        raise RuntimeError(
+            "GDAL could not create the temporary Unreal-local DEM."
+        )
+
+    # Preserve the local affine coordinates, but deliberately do NOT copy
+    # source_dataset.GetSpatialRef().
+    local_dataset.SetGeoTransform(source_dataset.GetGeoTransform())
+
+    local_band = local_dataset.GetRasterBand(1)
+
+    if local_band is None:
+        source_dataset = None
+        local_dataset = None
+        raise RuntimeError(
+            "GDAL could not access the temporary Unreal-local DEM band."
+        )
+
+    source_array = source_band.ReadAsArray()
+
+    if source_array is None:
+        source_dataset = None
+        local_dataset = None
+        raise RuntimeError("GDAL could not read the Unreal-local DEM.")
+
+    local_band.WriteArray(source_array)
+
+    nodata = source_band.GetNoDataValue()
+    if nodata is not None:
+        local_band.SetNoDataValue(nodata)
+
+    local_band.FlushCache()
+    local_dataset.FlushCache()
+
+    # The in-memory dataset is now independent of the file-backed source.
+    source_dataset = None
+
+    return local_dataset
 
 
 def _run_gdal_viewshed(

@@ -13,3 +13,4 @@ lark
 pillow
 PySide6
 psutil
+OpenEXR

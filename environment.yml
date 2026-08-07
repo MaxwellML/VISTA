@@ -17,3 +17,4 @@ dependencies:
   - pillow
   - PySide6
   - psutil
+  - OpenEXR
