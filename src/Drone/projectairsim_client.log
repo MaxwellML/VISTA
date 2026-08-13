@@ -1,93 +1,202 @@
-10:47:24:054 [INFO] Connecting to simulation server at 127.0.0.1
-10:47:24:062 [INFO] Connection opened.
-10:47:24:063 [INFO] Started the pub-sub topic receiving thread.
-10:47:24:063 [INFO] Loading scene config: scene_basic_drone.jsonc
-10:47:25:472 [INFO] Getting the list of available topic info from the sim server...
-10:47:25:483 [INFO] Successfully received topic info list.
-10:47:27:484 [INFO] World object updated for the loaded scene '/Sim/SceneBasicDrone'. Note: Any previous Drone object instances may no longer be valid.
-10:47:27:485 [INFO] Trajectory 'null_trajectory' imported successfully.
-10:47:27:485 [INFO] Initalizing Drone 'Drone1'...
-10:47:27:485 [INFO] -------------------------------------------------
-10:47:27:485 [INFO] The following topics can be subscribed to for robot 'Drone1':
-10:47:27:486 [INFO]     sensors["Chase"]["scene_camera"]
-10:47:27:486 [INFO]     sensors["Chase"]["scene_camera_info"]
-10:47:27:486 [INFO]     sensors["DownCamera"]["scene_camera"]
-10:47:27:486 [INFO]     sensors["DownCamera"]["scene_camera_info"]
-10:47:27:486 [INFO]     sensors["DownCamera"]["depth_camera"]
-10:47:27:486 [INFO]     sensors["DownCamera"]["depth_camera_info"]
-10:47:27:486 [INFO]     sensors["DownCamera"]["segmentation_camera"]
-10:47:27:486 [INFO]     sensors["DownCamera"]["segmentation_camera_info"]
-10:47:27:486 [INFO]     sensors["IMU1"]["imu_kinematics"]
-10:47:27:486 [INFO]     sensors["GPS"]["gps"]
-10:47:27:487 [INFO]     sensors["Barometer"]["barometer"]
-10:47:27:487 [INFO]     sensors["Magnetometer"]["magnetometer"]
-10:47:27:487 [INFO]     robot_info["actual_pose"]
-10:47:27:487 [INFO]     robot_info["collision_info"]
-10:47:27:487 [INFO]     robot_info["rotor_info"]
-10:47:27:487 [INFO] -------------------------------------------------
-10:47:27:487 [INFO] Drone 'Drone1' initialized for World scene '/Sim/SceneBasicDrone'
-10:47:27:489 [INFO] Loaded 30 plant targets
-10:47:27:489 [INFO] Resetting scene segmentation IDs to 0
-10:47:27:500 [INFO] Segmentation: Othonna_001 -> ID 1 | found=True
-10:47:27:503 [INFO] Segmentation: Othonna_002 -> ID 2 | found=True
-10:47:27:509 [INFO] Segmentation: Othonna_003 -> ID 3 | found=True
-10:47:27:516 [INFO] Segmentation: Othonna_004 -> ID 4 | found=True
-10:47:27:520 [INFO] Segmentation: Othonna_005 -> ID 5 | found=True
-10:47:27:523 [INFO] Segmentation: Othonna_006 -> ID 6 | found=True
-10:47:27:609 [INFO] Segmentation: Othonna_007 -> ID 7 | found=True
-10:47:27:614 [INFO] Segmentation: Othonna_008 -> ID 8 | found=True
-10:47:27:617 [INFO] Segmentation: Othonna_009 -> ID 9 | found=True
-10:47:27:619 [INFO] Segmentation: Othonna_010 -> ID 10 | found=True
-10:47:27:621 [INFO] Segmentation: Othonna_011 -> ID 11 | found=True
-10:47:27:623 [INFO] Segmentation: Othonna_012 -> ID 12 | found=True
-10:47:27:625 [INFO] Segmentation: Othonna_013 -> ID 13 | found=True
-10:47:27:626 [INFO] Segmentation: Othonna_014 -> ID 14 | found=True
-10:47:27:629 [INFO] Segmentation: Othonna_015 -> ID 15 | found=True
-10:47:27:633 [INFO] Segmentation: Othonna_016 -> ID 16 | found=True
-10:47:27:635 [INFO] Segmentation: Othonna_017 -> ID 17 | found=True
-10:47:27:636 [INFO] Segmentation: Othonna_018 -> ID 18 | found=True
-10:47:27:638 [INFO] Segmentation: Othonna_019 -> ID 19 | found=True
-10:47:27:640 [INFO] Segmentation: Othonna_020 -> ID 20 | found=True
-10:47:27:642 [INFO] Segmentation: Othonna_021 -> ID 21 | found=True
-10:47:27:645 [INFO] Segmentation: Othonna_022 -> ID 22 | found=True
-10:47:27:647 [INFO] Segmentation: Othonna_023 -> ID 23 | found=True
-10:47:27:649 [INFO] Segmentation: Othonna_024 -> ID 24 | found=True
-10:47:27:651 [INFO] Segmentation: Othonna_025 -> ID 25 | found=True
-10:47:27:653 [INFO] Segmentation: Othonna_026 -> ID 26 | found=True
-10:47:27:657 [INFO] Segmentation: Othonna_027 -> ID 27 | found=True
-10:47:27:658 [INFO] Segmentation: Othonna_028 -> ID 28 | found=True
-10:47:27:661 [INFO] Segmentation: Othonna_029 -> ID 29 | found=True
-10:47:27:663 [INFO] Segmentation: Othonna_030 -> ID 30 | found=True
-10:47:27:663 [INFO] Taking off
-10:47:30:927 [INFO] Climbing vertically to 30.0 m before horizontal flight
-10:47:34:081 [INFO] Reached flight altitude 30.0 m
-10:47:34:081 [INFO] Flying to Othonna_001 at X=249.109, Y=302.953
-10:48:01:142 [INFO] Reached Othonna_001 - landing
-10:48:16:792 [INFO] Landed at Othonna_001
-10:48:16:793 [ERROR] Exception occurred: Connection reset
+11:31:19:003 [INFO] Connecting to simulation server at 127.0.0.1
+11:31:19:011 [INFO] Connection opened.
+11:31:19:012 [INFO] Started the pub-sub topic receiving thread.
+11:31:19:012 [INFO] Loading scene config: scene_basic_drone.jsonc
+11:31:19:712 [INFO] Getting the list of available topic info from the sim server...
+11:31:19:722 [INFO] Successfully received topic info list.
+11:31:21:723 [INFO] World object updated for the loaded scene '/Sim/SceneBasicDrone'. Note: Any previous Drone object instances may no longer be valid.
+11:31:21:725 [INFO] Trajectory 'null_trajectory' imported successfully.
+11:31:21:725 [INFO] Initalizing Drone 'Drone1'...
+11:31:21:725 [INFO] -------------------------------------------------
+11:31:21:725 [INFO] The following topics can be subscribed to for robot 'Drone1':
+11:31:21:726 [INFO]     sensors["Chase"]["scene_camera"]
+11:31:21:726 [INFO]     sensors["Chase"]["scene_camera_info"]
+11:31:21:726 [INFO]     sensors["DownCamera"]["scene_camera"]
+11:31:21:726 [INFO]     sensors["DownCamera"]["scene_camera_info"]
+11:31:21:726 [INFO]     sensors["DownCamera"]["depth_camera"]
+11:31:21:726 [INFO]     sensors["DownCamera"]["depth_camera_info"]
+11:31:21:726 [INFO]     sensors["DownCamera"]["segmentation_camera"]
+11:31:21:727 [INFO]     sensors["DownCamera"]["segmentation_camera_info"]
+11:31:21:727 [INFO]     sensors["IMU1"]["imu_kinematics"]
+11:31:21:727 [INFO]     sensors["GPS"]["gps"]
+11:31:21:727 [INFO]     sensors["Barometer"]["barometer"]
+11:31:21:727 [INFO]     sensors["Magnetometer"]["magnetometer"]
+11:31:21:727 [INFO]     robot_info["actual_pose"]
+11:31:21:728 [INFO]     robot_info["collision_info"]
+11:31:21:728 [INFO]     robot_info["rotor_info"]
+11:31:21:728 [INFO] -------------------------------------------------
+11:31:21:728 [INFO] Drone 'Drone1' initialized for World scene '/Sim/SceneBasicDrone'
+11:31:21:733 [INFO] Loaded 30 plant targets
+11:31:21:734 [INFO] Resetting scene segmentation IDs to 0
+11:31:21:844 [INFO] Segmentation: Othonna_001 -> ID 1 | found=True
+11:31:21:847 [INFO] Segmentation: Othonna_002 -> ID 2 | found=True
+11:31:21:849 [INFO] Segmentation: Othonna_003 -> ID 3 | found=True
+11:31:21:851 [INFO] Segmentation: Othonna_004 -> ID 4 | found=True
+11:31:21:853 [INFO] Segmentation: Othonna_005 -> ID 5 | found=True
+11:31:21:855 [INFO] Segmentation: Othonna_006 -> ID 6 | found=True
+11:31:21:858 [INFO] Segmentation: Othonna_007 -> ID 7 | found=True
+11:31:21:861 [INFO] Segmentation: Othonna_008 -> ID 8 | found=True
+11:31:21:864 [INFO] Segmentation: Othonna_009 -> ID 9 | found=True
+11:31:21:866 [INFO] Segmentation: Othonna_010 -> ID 10 | found=True
+11:31:21:867 [INFO] Segmentation: Othonna_011 -> ID 11 | found=True
+11:31:21:870 [INFO] Segmentation: Othonna_012 -> ID 12 | found=True
+11:31:21:871 [INFO] Segmentation: Othonna_013 -> ID 13 | found=True
+11:31:21:874 [INFO] Segmentation: Othonna_014 -> ID 14 | found=True
+11:31:21:878 [INFO] Segmentation: Othonna_015 -> ID 15 | found=True
+11:31:21:880 [INFO] Segmentation: Othonna_016 -> ID 16 | found=True
+11:31:21:882 [INFO] Segmentation: Othonna_017 -> ID 17 | found=True
+11:31:21:884 [INFO] Segmentation: Othonna_018 -> ID 18 | found=True
+11:31:21:886 [INFO] Segmentation: Othonna_019 -> ID 19 | found=True
+11:31:21:889 [INFO] Segmentation: Othonna_020 -> ID 20 | found=True
+11:31:21:891 [INFO] Segmentation: Othonna_021 -> ID 21 | found=True
+11:31:21:894 [INFO] Segmentation: Othonna_022 -> ID 22 | found=True
+11:31:21:898 [INFO] Segmentation: Othonna_023 -> ID 23 | found=True
+11:31:21:901 [INFO] Segmentation: Othonna_024 -> ID 24 | found=True
+11:31:21:909 [INFO] Segmentation: Othonna_025 -> ID 25 | found=True
+11:31:21:915 [INFO] Segmentation: Othonna_026 -> ID 26 | found=True
+11:31:21:918 [INFO] Segmentation: Othonna_027 -> ID 27 | found=True
+11:31:21:938 [INFO] Segmentation: Othonna_028 -> ID 28 | found=True
+11:31:21:940 [INFO] Segmentation: Othonna_029 -> ID 29 | found=True
+11:31:21:943 [INFO] Segmentation: Othonna_030 -> ID 30 | found=True
+11:31:21:944 [INFO] Taking off
+11:31:24:969 [INFO] Climbing vertically to 30.0 m before horizontal flight
+11:31:28:119 [INFO] Reached flight altitude 30.0 m
+11:31:28:120 [INFO] Flying to Othonna_001 at X=249.109, Y=302.953
+11:31:28:120 [INFO] Positioning Othonna_001: attempt 1/6 at 17.0 m/s | target NED=(249.109000, 302.953000, -30.000000)
+11:31:55:140 [INFO] Controller reports move complete for Othonna_001; watching position for up to 3.0 s
+11:31:55:140 [INFO] Settling Othonna_001 | actual=(249.448181, 303.338989, -30.536411) | horizontal error=0.514 m vertical error=0.536 m | good samples=0/3
+11:31:55:251 [INFO] Settling Othonna_001 | actual=(250.511688, 304.569794, -30.630352) | horizontal error=2.140 m vertical error=0.630 m | good samples=0/3
+11:31:55:359 [INFO] Settling Othonna_001 | actual=(251.523895, 305.703247, -30.769434) | horizontal error=3.660 m vertical error=0.769 m | good samples=0/3
+11:31:55:631 [INFO] Settling Othonna_001 | actual=(253.744492, 308.140198, -31.318357) | horizontal error=6.957 m vertical error=1.318 m | good samples=0/3
+11:31:55:733 [INFO] Settling Othonna_001 | actual=(254.447586, 308.941620, -31.598871) | horizontal error=8.023 m vertical error=1.599 m | good samples=0/3
+11:31:55:843 [INFO] Settling Othonna_001 | actual=(255.104034, 309.733551, -31.938343) | horizontal error=9.051 m vertical error=1.938 m | good samples=0/3
+11:31:56:106 [INFO] Settling Othonna_001 | actual=(256.437714, 311.496490, -32.715134) | horizontal error=11.256 m vertical error=2.715 m | good samples=0/3
+11:31:56:213 [INFO] Settling Othonna_001 | actual=(256.922516, 312.173706, -32.922806) | horizontal error=12.086 m vertical error=2.923 m | good samples=0/3
+11:31:56:322 [INFO] Settling Othonna_001 | actual=(257.391663, 312.851685, -33.070499) | horizontal error=12.907 m vertical error=3.070 m | good samples=0/3
+11:31:56:577 [INFO] Settling Othonna_001 | actual=(258.351471, 314.346710, -33.190201) | horizontal error=14.671 m vertical error=3.190 m | good samples=0/3
+11:31:56:681 [INFO] Settling Othonna_001 | actual=(258.674469, 314.909821, -33.170963) | horizontal error=15.312 m vertical error=3.171 m | good samples=0/3
+11:31:56:790 [INFO] Settling Othonna_001 | actual=(258.971161, 315.477051, -33.116592) | horizontal error=15.941 m vertical error=3.117 m | good samples=0/3
+11:31:57:029 [INFO] Settling Othonna_001 | actual=(259.449158, 316.611145, -32.896519) | horizontal error=17.131 m vertical error=2.897 m | good samples=0/3
+11:31:57:132 [INFO] Settling Othonna_001 | actual=(259.578522, 317.050568, -32.766930) | horizontal error=17.560 m vertical error=2.767 m | good samples=0/3
+11:31:57:241 [INFO] Settling Othonna_001 | actual=(259.665161, 317.483948, -32.609520) | horizontal error=17.961 m vertical error=2.610 m | good samples=0/3
+11:31:57:484 [INFO] Settling Othonna_001 | actual=(259.685211, 318.348877, -32.187229) | horizontal error=18.679 m vertical error=2.187 m | good samples=0/3
+11:31:57:596 [INFO] Settling Othonna_001 | actual=(259.616852, 318.696014, -31.980026) | horizontal error=18.928 m vertical error=1.980 m | good samples=0/3
+11:31:57:705 [INFO] Settling Othonna_001 | actual=(259.505554, 319.006653, -31.781504) | horizontal error=19.126 m vertical error=1.782 m | good samples=0/3
+11:31:57:931 [INFO] Settling Othonna_001 | actual=(259.148254, 319.569214, -31.407310) | horizontal error=19.414 m vertical error=1.407 m | good samples=0/3
+11:31:58:047 [INFO] Settling Othonna_001 | actual=(258.897308, 319.829620, -31.236637) | horizontal error=19.510 m vertical error=1.237 m | good samples=0/3
+11:31:58:153 [WARNING] Othonna_001 did not settle within 0.20 m after 3.0 s | last horizontal error=19.510 m vertical error=1.237 m; starting correction 1/5 at 1.0 m/s
+11:31:58:154 [INFO] Positioning Othonna_001: attempt 2/6 at 1.0 m/s | target NED=(249.109000, 302.953000, -30.000000)
+11:32:21:133 [INFO] Controller reports move complete for Othonna_001; watching position for up to 3.0 s
+11:32:21:133 [INFO] Settling Othonna_001 | actual=(249.081238, 302.903229, -30.495586) | horizontal error=0.057 m vertical error=0.496 m | good samples=0/3
+11:32:21:241 [INFO] Settling Othonna_001 | actual=(249.050705, 302.848969, -30.497284) | horizontal error=0.119 m vertical error=0.497 m | good samples=0/3
+11:32:21:350 [INFO] Settling Othonna_001 | actual=(249.022980, 302.799683, -30.492781) | horizontal error=0.176 m vertical error=0.493 m | good samples=0/3
+11:32:21:634 [INFO] Settling Othonna_001 | actual=(248.970078, 302.700317, -30.481970) | horizontal error=0.288 m vertical error=0.482 m | good samples=0/3
+11:32:21:742 [INFO] Settling Othonna_001 | actual=(248.957474, 302.671844, -30.479376) | horizontal error=0.319 m vertical error=0.479 m | good samples=0/3
+11:32:21:851 [INFO] Settling Othonna_001 | actual=(248.949234, 302.648407, -30.477510) | horizontal error=0.344 m vertical error=0.478 m | good samples=0/3
+11:32:22:132 [INFO] Settling Othonna_001 | actual=(248.945648, 302.602905, -30.474911) | horizontal error=0.386 m vertical error=0.475 m | good samples=0/3
+11:32:22:243 [INFO] Settling Othonna_001 | actual=(248.950974, 302.590485, -30.474602) | horizontal error=0.395 m vertical error=0.475 m | good samples=0/3
+11:32:22:354 [INFO] Settling Othonna_001 | actual=(248.959717, 302.580750, -30.474606) | horizontal error=0.401 m vertical error=0.475 m | good samples=0/3
+11:32:22:624 [INFO] Settling Othonna_001 | actual=(248.992569, 302.567169, -30.475590) | horizontal error=0.403 m vertical error=0.476 m | good samples=0/3
+11:32:22:727 [INFO] Settling Othonna_001 | actual=(249.008759, 302.565277, -30.476238) | horizontal error=0.400 m vertical error=0.476 m | good samples=0/3
+11:32:22:835 [INFO] Settling Othonna_001 | actual=(249.027603, 302.565033, -30.477037) | horizontal error=0.396 m vertical error=0.477 m | good samples=0/3
+11:32:23:120 [INFO] Settling Othonna_001 | actual=(249.082642, 302.572845, -30.479496) | horizontal error=0.381 m vertical error=0.479 m | good samples=0/3
+11:32:23:227 [INFO] Settling Othonna_001 | actual=(249.104523, 302.578705, -30.480497) | horizontal error=0.374 m vertical error=0.480 m | good samples=0/3
+11:32:23:336 [INFO] Settling Othonna_001 | actual=(249.127991, 302.586578, -30.481556) | horizontal error=0.367 m vertical error=0.482 m | good samples=0/3
+11:32:23:634 [INFO] Settling Othonna_001 | actual=(249.189621, 302.615479, -30.484251) | horizontal error=0.347 m vertical error=0.484 m | good samples=0/3
+11:32:23:740 [INFO] Settling Othonna_001 | actual=(249.210724, 302.628601, -30.485147) | horizontal error=0.340 m vertical error=0.485 m | good samples=0/3
+11:32:23:849 [INFO] Settling Othonna_001 | actual=(249.231613, 302.643463, -30.486029) | horizontal error=0.333 m vertical error=0.486 m | good samples=0/3
+11:32:24:149 [WARNING] Othonna_001 did not settle within 0.20 m after 3.0 s | last horizontal error=0.333 m vertical error=0.486 m; starting correction 2/5 at 1.0 m/s
+11:32:24:149 [INFO] Positioning Othonna_001: attempt 3/6 at 1.0 m/s | target NED=(249.109000, 302.953000, -30.000000)
+11:32:24:152 [INFO] Controller reports move complete for Othonna_001; watching position for up to 3.0 s
+11:32:24:152 [INFO] Settling Othonna_001 | actual=(249.283722, 302.691681, -30.488167) | horizontal error=0.314 m vertical error=0.488 m | good samples=0/3
+11:32:24:255 [INFO] Settling Othonna_001 | actual=(249.299011, 302.710236, -30.488798) | horizontal error=0.308 m vertical error=0.489 m | good samples=0/3
+11:32:24:364 [INFO] Settling Othonna_001 | actual=(249.313629, 302.730927, -30.489412) | horizontal error=0.302 m vertical error=0.489 m | good samples=0/3
+11:32:24:663 [INFO] Settling Othonna_001 | actual=(249.344696, 302.792236, -30.490805) | horizontal error=0.285 m vertical error=0.491 m | good samples=0/3
+11:32:24:772 [INFO] Settling Othonna_001 | actual=(249.352203, 302.815033, -30.491205) | horizontal error=0.280 m vertical error=0.491 m | good samples=0/3
+11:32:24:880 [INFO] Settling Othonna_001 | actual=(249.357956, 302.839203, -30.491573) | horizontal error=0.274 m vertical error=0.492 m | good samples=0/3
+11:32:25:165 [INFO] Settling Othonna_001 | actual=(249.363205, 302.902985, -30.492376) | horizontal error=0.259 m vertical error=0.492 m | good samples=0/3
+11:32:25:271 [INFO] Settling Othonna_001 | actual=(249.361450, 302.926483, -30.492624) | horizontal error=0.254 m vertical error=0.493 m | good samples=0/3
+11:32:25:380 [INFO] Settling Othonna_001 | actual=(249.357758, 302.949982, -30.492825) | horizontal error=0.249 m vertical error=0.493 m | good samples=0/3
+11:32:25:675 [INFO] Settling Othonna_001 | actual=(249.337296, 303.013092, -30.493317) | horizontal error=0.236 m vertical error=0.493 m | good samples=0/3
+11:32:25:785 [INFO] Settling Othonna_001 | actual=(249.326157, 303.034912, -30.493454) | horizontal error=0.232 m vertical error=0.493 m | good samples=0/3
+11:32:25:895 [INFO] Settling Othonna_001 | actual=(249.313217, 303.055695, -30.493591) | horizontal error=0.229 m vertical error=0.494 m | good samples=0/3
+11:32:26:168 [INFO] Settling Othonna_001 | actual=(249.273575, 303.102325, -30.493891) | horizontal error=0.222 m vertical error=0.494 m | good samples=0/3
+11:32:26:270 [INFO] Settling Othonna_001 | actual=(249.256104, 303.117615, -30.493956) | horizontal error=0.221 m vertical error=0.494 m | good samples=0/3
+11:32:26:378 [INFO] Settling Othonna_001 | actual=(249.236893, 303.131989, -30.494022) | horizontal error=0.220 m vertical error=0.494 m | good samples=0/3
+11:32:26:675 [INFO] Settling Othonna_001 | actual=(249.177567, 303.163361, -30.494209) | horizontal error=0.221 m vertical error=0.494 m | good samples=0/3
+11:32:26:782 [INFO] Settling Othonna_001 | actual=(249.154816, 303.171295, -30.494276) | horizontal error=0.223 m vertical error=0.494 m | good samples=0/3
+11:32:26:893 [INFO] Settling Othonna_001 | actual=(249.130112, 303.177551, -30.494347) | horizontal error=0.226 m vertical error=0.494 m | good samples=0/3
+11:32:27:182 [WARNING] Othonna_001 did not settle within 0.20 m after 3.0 s | last horizontal error=0.226 m vertical error=0.494 m; starting correction 3/5 at 1.0 m/s
+11:32:27:182 [INFO] Positioning Othonna_001: attempt 4/6 at 1.0 m/s | target NED=(249.109000, 302.953000, -30.000000)
+11:32:27:183 [INFO] Controller reports move complete for Othonna_001; watching position for up to 3.0 s
+11:32:27:183 [INFO] Settling Othonna_001 | actual=(249.064392, 303.183899, -30.494530) | horizontal error=0.235 m vertical error=0.495 m | good samples=0/3
+11:32:27:296 [INFO] Settling Othonna_001 | actual=(249.038986, 303.182404, -30.494579) | horizontal error=0.240 m vertical error=0.495 m | good samples=0/3
+11:32:27:405 [INFO] Settling Othonna_001 | actual=(249.014267, 303.178894, -30.494579) | horizontal error=0.245 m vertical error=0.495 m | good samples=0/3
+11:32:27:695 [INFO] Settling Othonna_001 | actual=(248.951324, 303.159912, -30.494606) | horizontal error=0.260 m vertical error=0.495 m | good samples=0/3
+11:32:27:810 [INFO] Settling Othonna_001 | actual=(248.927521, 303.148529, -30.494627) | horizontal error=0.267 m vertical error=0.495 m | good samples=0/3
+11:32:27:920 [INFO] Settling Othonna_001 | actual=(248.905945, 303.135864, -30.494627) | horizontal error=0.273 m vertical error=0.495 m | good samples=0/3
+11:32:28:191 [INFO] Settling Othonna_001 | actual=(248.857193, 303.096619, -30.494659) | horizontal error=0.290 m vertical error=0.495 m | good samples=0/3
+11:32:28:307 [INFO] Settling Othonna_001 | actual=(248.839233, 303.077240, -30.494659) | horizontal error=0.297 m vertical error=0.495 m | good samples=0/3
+11:32:28:418 [INFO] Settling Othonna_001 | actual=(248.823853, 303.057343, -30.494661) | horizontal error=0.304 m vertical error=0.495 m | good samples=0/3
+11:32:28:741 [INFO] Settling Othonna_001 | actual=(248.789032, 302.992981, -30.494675) | horizontal error=0.322 m vertical error=0.495 m | good samples=0/3
+11:32:28:852 [INFO] Settling Othonna_001 | actual=(248.780792, 302.969055, -30.494684) | horizontal error=0.329 m vertical error=0.495 m | good samples=0/3
+11:32:28:960 [INFO] Settling Othonna_001 | actual=(248.774704, 302.945557, -30.494684) | horizontal error=0.334 m vertical error=0.495 m | good samples=0/3
+11:32:29:226 [INFO] Settling Othonna_001 | actual=(248.768066, 302.884613, -30.494694) | horizontal error=0.348 m vertical error=0.495 m | good samples=0/3
+11:32:29:333 [INFO] Settling Othonna_001 | actual=(248.768860, 302.860046, -30.494694) | horizontal error=0.353 m vertical error=0.495 m | good samples=0/3
+11:32:29:439 [INFO] Settling Othonna_001 | actual=(248.771652, 302.835480, -30.494694) | horizontal error=0.357 m vertical error=0.495 m | good samples=0/3
+11:32:29:722 [INFO] Settling Othonna_001 | actual=(248.788559, 302.772156, -30.494699) | horizontal error=0.368 m vertical error=0.495 m | good samples=0/3
+11:32:29:827 [INFO] Settling Othonna_001 | actual=(248.798416, 302.749664, -30.494699) | horizontal error=0.371 m vertical error=0.495 m | good samples=0/3
+11:32:29:935 [INFO] Settling Othonna_001 | actual=(248.810425, 302.727295, -30.494699) | horizontal error=0.374 m vertical error=0.495 m | good samples=0/3
+11:32:30:218 [WARNING] Othonna_001 did not settle within 0.20 m after 3.0 s | last horizontal error=0.374 m vertical error=0.495 m; starting correction 4/5 at 1.0 m/s
+11:32:30:219 [INFO] Positioning Othonna_001: attempt 5/6 at 1.0 m/s | target NED=(249.109000, 302.953000, -30.000000)
+11:32:30:220 [INFO] Controller reports move complete for Othonna_001; watching position for up to 3.0 s
+11:32:30:220 [INFO] Settling Othonna_001 | actual=(248.850250, 302.674225, -30.494699) | horizontal error=0.380 m vertical error=0.495 m | good samples=0/3
+11:32:30:324 [INFO] Settling Othonna_001 | actual=(248.867386, 302.657257, -30.494699) | horizontal error=0.382 m vertical error=0.495 m | good samples=0/3
+11:32:30:432 [INFO] Settling Othonna_001 | actual=(248.886948, 302.640900, -30.494699) | horizontal error=0.383 m vertical error=0.495 m | good samples=0/3
+11:32:30:717 [INFO] Settling Othonna_001 | actual=(248.943848, 302.606262, -30.494705) | horizontal error=0.384 m vertical error=0.495 m | good samples=0/3
+11:32:30:823 [INFO] Settling Othonna_001 | actual=(248.966782, 302.596619, -30.494705) | horizontal error=0.384 m vertical error=0.495 m | good samples=0/3
+11:32:30:932 [INFO] Settling Othonna_001 | actual=(248.991165, 302.588654, -30.494705) | horizontal error=0.383 m vertical error=0.495 m | good samples=0/3
+11:32:31:229 [INFO] Settling Othonna_001 | actual=(249.060760, 302.577484, -30.494705) | horizontal error=0.379 m vertical error=0.495 m | good samples=0/3
+11:32:31:336 [INFO] Settling Othonna_001 | actual=(249.085861, 302.577393, -30.494705) | horizontal error=0.376 m vertical error=0.495 m | good samples=0/3
+11:32:31:444 [INFO] Settling Othonna_001 | actual=(249.111679, 302.579407, -30.494709) | horizontal error=0.374 m vertical error=0.495 m | good samples=0/3
+11:32:31:741 [INFO] Settling Othonna_001 | actual=(249.179718, 302.595673, -30.494709) | horizontal error=0.364 m vertical error=0.495 m | good samples=0/3
+11:32:31:850 [INFO] Settling Othonna_001 | actual=(249.203613, 302.605438, -30.494709) | horizontal error=0.360 m vertical error=0.495 m | good samples=0/3
+11:32:31:959 [INFO] Settling Othonna_001 | actual=(249.226608, 302.617157, -30.494709) | horizontal error=0.356 m vertical error=0.495 m | good samples=0/3
+11:32:32:257 [INFO] Settling Othonna_001 | actual=(249.284058, 302.659058, -30.494709) | horizontal error=0.342 m vertical error=0.495 m | good samples=0/3
+11:32:32:362 [INFO] Settling Othonna_001 | actual=(249.301880, 302.676819, -30.494709) | horizontal error=0.337 m vertical error=0.495 m | good samples=0/3
+11:32:32:471 [INFO] Settling Othonna_001 | actual=(249.318237, 302.696014, -30.494709) | horizontal error=0.331 m vertical error=0.495 m | good samples=0/3
+11:32:32:769 [INFO] Settling Othonna_001 | actual=(249.355515, 302.756775, -30.494709) | horizontal error=0.315 m vertical error=0.495 m | good samples=0/3
+11:32:32:875 [INFO] Settling Othonna_001 | actual=(249.365265, 302.780243, -30.494709) | horizontal error=0.309 m vertical error=0.495 m | good samples=0/3
+11:32:32:984 [INFO] Settling Othonna_001 | actual=(249.373260, 302.805084, -30.494709) | horizontal error=0.303 m vertical error=0.495 m | good samples=0/3
+11:32:33:286 [WARNING] Othonna_001 did not settle within 0.20 m after 3.0 s | last horizontal error=0.303 m vertical error=0.495 m; starting correction 5/5 at 1.0 m/s
+11:32:33:286 [INFO] Positioning Othonna_001: attempt 6/6 at 1.0 m/s | target NED=(249.109000, 302.953000, -30.000000)
+11:32:33:287 [INFO] Controller reports move complete for Othonna_001; watching position for up to 3.0 s
+11:32:33:288 [INFO] Settling Othonna_001 | actual=(249.384445, 302.877472, -30.494709) | horizontal error=0.286 m vertical error=0.495 m | good samples=0/3
+11:32:33:389 [INFO] Settling Othonna_001 | actual=(249.384384, 302.901642, -30.494709) | horizontal error=0.280 m vertical error=0.495 m | good samples=0/3
+11:32:33:497 [INFO] Settling Othonna_001 | actual=(249.382248, 302.928009, -30.494709) | horizontal error=0.274 m vertical error=0.495 m | good samples=0/3
+11:32:33:796 [INFO] Settling Othonna_001 | actual=(249.365280, 302.997955, -30.494715) | horizontal error=0.260 m vertical error=0.495 m | good samples=0/3
+11:32:33:902 [INFO] Settling Othonna_001 | actual=(249.355469, 303.021454, -30.494715) | horizontal error=0.256 m vertical error=0.495 m | good samples=0/3
+11:32:34:012 [INFO] Settling Othonna_001 | actual=(249.343048, 303.045410, -30.494715) | horizontal error=0.252 m vertical error=0.495 m | good samples=0/3
+11:32:34:313 [INFO] Settling Othonna_001 | actual=(249.300156, 303.103607, -30.494715) | horizontal error=0.243 m vertical error=0.495 m | good samples=0/3
+11:32:34:416 [INFO] Settling Othonna_001 | actual=(249.282471, 303.121063, -30.494715) | horizontal error=0.242 m vertical error=0.495 m | good samples=0/3
+11:32:34:524 [INFO] Settling Othonna_001 | actual=(249.262833, 303.137604, -30.494715) | horizontal error=0.240 m vertical error=0.495 m | good samples=0/3
+11:32:34:806 [INFO] Settling Othonna_001 | actual=(249.204147, 303.173676, -30.494715) | horizontal error=0.240 m vertical error=0.495 m | good samples=0/3
+11:32:34:913 [INFO] Settling Othonna_001 | actual=(249.180420, 303.183777, -30.494715) | horizontal error=0.242 m vertical error=0.495 m | good samples=0/3
+11:32:35:021 [INFO] Settling Othonna_001 | actual=(249.155991, 303.191833, -30.494715) | horizontal error=0.243 m vertical error=0.495 m | good samples=0/3
+11:32:35:302 [INFO] Settling Othonna_001 | actual=(249.088531, 303.203583, -30.494715) | horizontal error=0.251 m vertical error=0.495 m | good samples=0/3
+11:32:35:410 [INFO] Settling Othonna_001 | actual=(249.062164, 303.204193, -30.494715) | horizontal error=0.256 m vertical error=0.495 m | good samples=0/3
+11:32:35:519 [INFO] Settling Othonna_001 | actual=(249.035797, 303.202576, -30.494715) | horizontal error=0.260 m vertical error=0.495 m | good samples=0/3
+11:32:35:804 [INFO] Settling Othonna_001 | actual=(248.967880, 303.187927, -30.494715) | horizontal error=0.274 m vertical error=0.495 m | good samples=0/3
+11:32:35:908 [INFO] Settling Othonna_001 | actual=(248.944275, 303.179077, -30.494715) | horizontal error=0.280 m vertical error=0.495 m | good samples=0/3
+11:32:36:017 [INFO] Settling Othonna_001 | actual=(248.919464, 303.167297, -30.494715) | horizontal error=0.286 m vertical error=0.495 m | good samples=0/3
+11:32:36:315 [ERROR] Exception occurred: Could not settle within 0.20 m of Othonna_001 after 6 attempts. Last position=(248.919464, 303.167297, -30.494715), horizontal error=0.286 m, vertical error=0.495 m.
 Traceback (most recent call last):
-  File "C:\Users\cmdp7\OneDrive\Desktop\VISTA\src\Drone\hello_drone.py", line 396, in main
-    await telemetry_task
-  File "C:\Users\cmdp7\OneDrive\Desktop\VISTA\src\Drone\hello_drone.py", line 205, in display_telemetry
-    visible_plant_pixels = get_visible_plant_pixels(
-        drone,
-        target,
+  File "C:\Users\cmdp7\OneDrive\Desktop\VISTA\src\Drone\hello_drone.py", line 507, in main
+    await move_to_target_precisely(drone, target)
+  File "C:\Users\cmdp7\OneDrive\Desktop\VISTA\src\Drone\hello_drone.py", line 383, in move_to_target_precisely
+    raise RuntimeError(
+    ...<5 lines>...
     )
-  File "C:\Users\cmdp7\OneDrive\Desktop\VISTA\src\Drone\hello_drone.py", line 155, in get_visible_plant_pixels
-    responses = drone.get_images(
-        SEGMENTATION_CAMERA,
-        [ImageType.SEGMENTATION],
-    )
-  File "C:\Users\cmdp7\AppData\Roaming\Python\Python313\site-packages\projectairsim\drone.py", line 1203, in get_images
-    get_images_data = self.client.request(get_images_req)
-  File "C:\Users\cmdp7\AppData\Roaming\Python\Python313\site-packages\projectairsim\client.py", line 245, in request
-    response = self.socket_services.recv_msg()
-  File "C:\Users\cmdp7\AppData\Roaming\Python\Python313\site-packages\pynng\nng.py", line 635, in recv_msg
-    check_err(lib.nng_recvmsg(self.socket, msg_p, flags))
-    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\cmdp7\AppData\Roaming\Python\Python313\site-packages\pynng\exceptions.py", line 202, in check_err
-    raise exc(string, err)
-pynng.exceptions.ConnectionReset: Connection reset
-10:48:16:798 [INFO] Disconnecting from simulation server...
-10:48:17:814 [WARNING] Timed out while trying to unsubscribe from all topics.
-10:48:17:814 [INFO] Disconnected.
+RuntimeError: Could not settle within 0.20 m of Othonna_001 after 6 attempts. Last position=(248.919464, 303.167297, -30.494715), horizontal error=0.286 m, vertical error=0.495 m.
+11:32:36:317 [INFO] Disconnecting from simulation server...
+11:32:36:358 [INFO] Disconnected.

@@ -32,8 +32,15 @@ TELEMETRY_INTERVAL_SEC = 0.25
 
 # Precision settings for waypoint arrival.
 POSITION_TOLERANCE_M = 0.20
-FINAL_APPROACH_VELOCITY_MPS = 3.0
+FINAL_APPROACH_VELOCITY_MPS = 1.0
 MAX_POSITION_CORRECTIONS = 5
+
+# After Project AirSim reports that a move has completed, keep watching the
+# ground-truth position for a short period instead of immediately consuming
+# another correction attempt.
+POSITION_CHECK_INTERVAL_SEC = 0.10
+SETTLE_TIMEOUT_SEC = 3.0
+REQUIRED_GOOD_SAMPLES = 3
 
 
 # ---------------------------------------------------------------------------
@@ -245,10 +252,21 @@ async def move_to_target_precisely(drone, target):
     """
     Fly to a target, verify the ground-truth position, and readjust if needed.
 
-    The first approach uses FLIGHT_VELOCITY_MPS. If Project AirSim reports that
-    the move has completed but the drone is still outside POSITION_TOLERANCE_M,
-    subsequent correction attempts use FINAL_APPROACH_VELOCITY_MPS.
+    The first approach uses FLIGHT_VELOCITY_MPS. Subsequent corrections use
+    FINAL_APPROACH_VELOCITY_MPS.
+
+    After each move command completes, watch the real ground-truth position for
+    up to SETTLE_TIMEOUT_SEC. The waypoint is accepted only after
+    REQUIRED_GOOD_SAMPLES consecutive readings are within tolerance.
     """
+    loop = asyncio.get_running_loop()
+
+    last_x = None
+    last_y = None
+    last_z = None
+    last_horizontal_error = None
+    last_vertical_error = None
+
     for attempt in range(MAX_POSITION_CORRECTIONS + 1):
         velocity = (
             FLIGHT_VELOCITY_MPS
@@ -258,7 +276,7 @@ async def move_to_target_precisely(drone, target):
 
         projectairsim_log().info(
             "Positioning %s: attempt %d/%d at %.1f m/s | "
-            "target NED=(%.6f, %.6f, %.6f)",
+            "target NED=(%.7f, %.7f, %.7f)",
             target["id"],
             attempt + 1,
             MAX_POSITION_CORRECTIONS + 1,
@@ -276,67 +294,98 @@ async def move_to_target_precisely(drone, target):
         )
         await move_task
 
-        # The flight controller believes the move is complete. Check where the
-        # drone actually is before accepting the waypoint.
-        pose = drone.get_ground_truth_pose()
-        position = pose["translation"]
-
-        current_x = float(position["x"])
-        current_y = float(position["y"])
-        current_z = float(position["z"])
-
-        dx = target["x"] - current_x
-        dy = target["y"] - current_y
-        dz = target["z"] - current_z
-        horizontal_error = (dx**2 + dy**2) ** 0.5
-        vertical_error = abs(dz)
-
         projectairsim_log().info(
-            "Controller reports arrival at %s | "
-            "target=(%.6f, %.6f, %.6f) | "
-            "actual=(%.6f, %.6f, %.6f) | "
-            "dN=%+.6f m dE=%+.6f m dD=%+.6f m | "
-            "horizontal error=%.6f m vertical error=%.6f m",
+            "Controller reports move complete for %s; "
+            "watching position for up to %.1f s",
             target["id"],
-            target["x"],
-            target["y"],
-            target["z"],
-            current_x,
-            current_y,
-            current_z,
-            dx,
-            dy,
-            dz,
-            horizontal_error,
-            vertical_error,
+            SETTLE_TIMEOUT_SEC,
         )
 
-        if (
-            horizontal_error <= POSITION_TOLERANCE_M
-            and vertical_error <= POSITION_TOLERANCE_M
-        ):
+        good_samples = 0
+        settle_deadline = loop.time() + SETTLE_TIMEOUT_SEC
+
+        while loop.time() < settle_deadline:
+            pose = drone.get_ground_truth_pose()
+            position = pose["translation"]
+
+            current_x = float(position["x"])
+            current_y = float(position["y"])
+            current_z = float(position["z"])
+
+            dx = target["x"] - current_x
+            dy = target["y"] - current_y
+            dz = target["z"] - current_z
+
+            horizontal_error = (dx**2 + dy**2) ** 0.5
+            vertical_error = abs(dz)
+
+            last_x = current_x
+            last_y = current_y
+            last_z = current_z
+            last_horizontal_error = horizontal_error
+            last_vertical_error = vertical_error
+
+            inside_tolerance = (
+                horizontal_error <= POSITION_TOLERANCE_M
+                and vertical_error <= POSITION_TOLERANCE_M
+            )
+
+            if inside_tolerance:
+                good_samples += 1
+            else:
+                good_samples = 0
+
             projectairsim_log().info(
-                "Confirmed %s within %.2f m tolerance | "
-                "accepted position=(%.6f, %.6f, %.6f)",
+                "Settling %s | actual=(%.7f, %.7f, %.7f) | "
+                "horizontal error=%.3f m vertical error=%.3f m | "
+                "good samples=%d/%d",
                 target["id"],
-                POSITION_TOLERANCE_M,
                 current_x,
                 current_y,
                 current_z,
+                horizontal_error,
+                vertical_error,
+                good_samples,
+                REQUIRED_GOOD_SAMPLES,
             )
-            return current_x, current_y, current_z
+
+            if good_samples >= REQUIRED_GOOD_SAMPLES:
+                projectairsim_log().info(
+                    "Confirmed %s within %.2f m tolerance for %d "
+                    "consecutive samples | accepted position="
+                    "(%.7f, %.7f, %.7f)",
+                    target["id"],
+                    POSITION_TOLERANCE_M,
+                    REQUIRED_GOOD_SAMPLES,
+                    current_x,
+                    current_y,
+                    current_z,
+                )
+                return current_x, current_y, current_z
+
+            await asyncio.sleep(POSITION_CHECK_INTERVAL_SEC)
 
         if attempt < MAX_POSITION_CORRECTIONS:
             projectairsim_log().warning(
-                "%s is outside %.2f m tolerance; readjusting at %.1f m/s",
+                "%s did not settle within %.2f m after %.1f s | "
+                "last horizontal error=%.3f m vertical error=%.3f m; "
+                "starting correction %d/%d at %.1f m/s",
                 target["id"],
                 POSITION_TOLERANCE_M,
+                SETTLE_TIMEOUT_SEC,
+                last_horizontal_error,
+                last_vertical_error,
+                attempt + 1,
+                MAX_POSITION_CORRECTIONS,
                 FINAL_APPROACH_VELOCITY_MPS,
             )
 
     raise RuntimeError(
         f"Could not settle within {POSITION_TOLERANCE_M:.2f} m of "
-        f"{target['id']} after {MAX_POSITION_CORRECTIONS + 1} attempts."
+        f"{target['id']} after {MAX_POSITION_CORRECTIONS + 1} attempts. "
+        f"Last position=({last_x:.6f}, {last_y:.6f}, {last_z:.6f}), "
+        f"horizontal error={last_horizontal_error:.3f} m, "
+        f"vertical error={last_vertical_error:.3f} m."
     )
 
 
