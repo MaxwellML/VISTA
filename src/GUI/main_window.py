@@ -69,10 +69,13 @@ from SOE.viewpoint import (
     build_viewpoint_opf,
 )
 
+from SOE.viewpoint_generator import (
+    ViewpointGenerationResult,
+    generate_viewpoints_from_opf,
+)
 
-# --- CHANGED: machine-readable GeoTIFF coordinate mode ---
 UNREAL_LOCAL_COORDINATE_MODE = "unreal_local"
-# --- END CHANGED ---
+
 
 
 ModuleRunner = Callable[..., object]
@@ -107,6 +110,7 @@ class PipelineOutput:
 
     component_results: dict[str, object]
     opf_result: object
+    generated_viewpoints: list[ViewpointGenerationResult]
     transform: Any
     crs: Any
 
@@ -118,6 +122,10 @@ def run_selected_pipeline_on_visible_dem_crop(
     selected_modules: SelectedModules,
     opf_runner: ModuleRunner,
     coordinate_mode: str | None = None,
+    generate_viewpoints: bool = False,
+    verification_radius_m: float = 30.0,
+    suppression_radius_m: float = 50.0,
+    max_generated_viewpoints: int = 10,
 ) -> PipelineOutput:
     """Run the selected modules and OPF on one shared temporary DEM crop.
 
@@ -150,9 +158,20 @@ def run_selected_pipeline_on_visible_dem_crop(
             occlusion_result=component_results.get("occlusion"),
         )
 
+        generated_viewpoints: list[ViewpointGenerationResult] = []
+
+        if generate_viewpoints:
+            generated_viewpoints = generate_viewpoints_from_opf(
+                opf_result,
+                verification_radius_m=verification_radius_m,
+                suppression_radius_m=suppression_radius_m,
+                max_viewpoints=max_generated_viewpoints,
+            )
+
         return PipelineOutput(
             component_results=component_results,
             opf_result=opf_result,
+            generated_viewpoints=generated_viewpoints,
             transform=crop.transform,
             crs=crop.crs,
         )
@@ -195,6 +214,8 @@ class MainWindow(QMainWindow):
         self.botanical_result: object | None = None
         self.occlusion_result: object | None = None
         self.opf_result: object | None = None
+
+
 
         self.thread_pool = QThreadPool.globalInstance()
         self._workers: set[FunctionWorker] = set()
@@ -1451,6 +1472,10 @@ class MainWindow(QMainWindow):
             selected_modules=selected_modules,
             opf_runner=self.opf_runner,
             coordinate_mode=self._dem_tags.get("coordinate_mode"),
+            generate_viewpoints=not self.original_viewpoints,
+            verification_radius_m=30.0,
+            suppression_radius_m=50.0,
+            max_generated_viewpoints=10,
         )
         self._workers.add(worker)
 
@@ -1471,6 +1496,11 @@ class MainWindow(QMainWindow):
         """Store and display all results from a completed pipeline."""
 
         results = output.component_results
+
+        if output.generated_viewpoints:
+            self._store_generated_viewpoints(
+                output.generated_viewpoints
+            )
 
         if "visibility" in results:
             self._receive_module_result(
@@ -1522,6 +1552,55 @@ class MainWindow(QMainWindow):
         # Component display marks a previous OPF stale, so store/show the newly
         # calculated OPF only after every component has been processed.
         self._receive_opf_result(output.opf_result)
+
+
+    def _store_generated_viewpoints(
+        self,
+        generated: list[ViewpointGenerationResult],
+    ) -> None:
+        """Store OPF-generated viewpoints only when none were supplied."""
+
+        # User-supplied viewpoints always take precedence. 
+        # Generation is already disabled when a run starts with original viewpoints.
+        if self.original_viewpoints:
+            return
+
+        next_identifier = max(
+            (
+                viewpoint.identifier
+                for viewpoint in self.original_viewpoints
+            ),
+            default=0,
+        ) + 1
+
+        for result in generated:
+            region = result.viewpoint
+
+            longitude, latitude = (
+                self._stored_coordinates_from_map_point(
+                    region.x,
+                    region.y,
+                )
+            )
+
+            identifier = next_identifier
+            next_identifier += 1
+
+            self.original_viewpoints.append(
+                Viewpoint(
+                    identifier=identifier,
+                    map_x=region.x,
+                    map_y=region.y,
+                    longitude=longitude,
+                    latitude=latitude,
+                    source_identifiers=(identifier,),
+                )
+            )
+
+        self._rebuild_downsampled_viewpoints()
+        self._refresh_viewpoint_preview()
+
+
 
     def _receive_module_result(
         self,

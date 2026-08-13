@@ -1,0 +1,93 @@
+10:47:24:054 [INFO] Connecting to simulation server at 127.0.0.1
+10:47:24:062 [INFO] Connection opened.
+10:47:24:063 [INFO] Started the pub-sub topic receiving thread.
+10:47:24:063 [INFO] Loading scene config: scene_basic_drone.jsonc
+10:47:25:472 [INFO] Getting the list of available topic info from the sim server...
+10:47:25:483 [INFO] Successfully received topic info list.
+10:47:27:484 [INFO] World object updated for the loaded scene '/Sim/SceneBasicDrone'. Note: Any previous Drone object instances may no longer be valid.
+10:47:27:485 [INFO] Trajectory 'null_trajectory' imported successfully.
+10:47:27:485 [INFO] Initalizing Drone 'Drone1'...
+10:47:27:485 [INFO] -------------------------------------------------
+10:47:27:485 [INFO] The following topics can be subscribed to for robot 'Drone1':
+10:47:27:486 [INFO]     sensors["Chase"]["scene_camera"]
+10:47:27:486 [INFO]     sensors["Chase"]["scene_camera_info"]
+10:47:27:486 [INFO]     sensors["DownCamera"]["scene_camera"]
+10:47:27:486 [INFO]     sensors["DownCamera"]["scene_camera_info"]
+10:47:27:486 [INFO]     sensors["DownCamera"]["depth_camera"]
+10:47:27:486 [INFO]     sensors["DownCamera"]["depth_camera_info"]
+10:47:27:486 [INFO]     sensors["DownCamera"]["segmentation_camera"]
+10:47:27:486 [INFO]     sensors["DownCamera"]["segmentation_camera_info"]
+10:47:27:486 [INFO]     sensors["IMU1"]["imu_kinematics"]
+10:47:27:486 [INFO]     sensors["GPS"]["gps"]
+10:47:27:487 [INFO]     sensors["Barometer"]["barometer"]
+10:47:27:487 [INFO]     sensors["Magnetometer"]["magnetometer"]
+10:47:27:487 [INFO]     robot_info["actual_pose"]
+10:47:27:487 [INFO]     robot_info["collision_info"]
+10:47:27:487 [INFO]     robot_info["rotor_info"]
+10:47:27:487 [INFO] -------------------------------------------------
+10:47:27:487 [INFO] Drone 'Drone1' initialized for World scene '/Sim/SceneBasicDrone'
+10:47:27:489 [INFO] Loaded 30 plant targets
+10:47:27:489 [INFO] Resetting scene segmentation IDs to 0
+10:47:27:500 [INFO] Segmentation: Othonna_001 -> ID 1 | found=True
+10:47:27:503 [INFO] Segmentation: Othonna_002 -> ID 2 | found=True
+10:47:27:509 [INFO] Segmentation: Othonna_003 -> ID 3 | found=True
+10:47:27:516 [INFO] Segmentation: Othonna_004 -> ID 4 | found=True
+10:47:27:520 [INFO] Segmentation: Othonna_005 -> ID 5 | found=True
+10:47:27:523 [INFO] Segmentation: Othonna_006 -> ID 6 | found=True
+10:47:27:609 [INFO] Segmentation: Othonna_007 -> ID 7 | found=True
+10:47:27:614 [INFO] Segmentation: Othonna_008 -> ID 8 | found=True
+10:47:27:617 [INFO] Segmentation: Othonna_009 -> ID 9 | found=True
+10:47:27:619 [INFO] Segmentation: Othonna_010 -> ID 10 | found=True
+10:47:27:621 [INFO] Segmentation: Othonna_011 -> ID 11 | found=True
+10:47:27:623 [INFO] Segmentation: Othonna_012 -> ID 12 | found=True
+10:47:27:625 [INFO] Segmentation: Othonna_013 -> ID 13 | found=True
+10:47:27:626 [INFO] Segmentation: Othonna_014 -> ID 14 | found=True
+10:47:27:629 [INFO] Segmentation: Othonna_015 -> ID 15 | found=True
+10:47:27:633 [INFO] Segmentation: Othonna_016 -> ID 16 | found=True
+10:47:27:635 [INFO] Segmentation: Othonna_017 -> ID 17 | found=True
+10:47:27:636 [INFO] Segmentation: Othonna_018 -> ID 18 | found=True
+10:47:27:638 [INFO] Segmentation: Othonna_019 -> ID 19 | found=True
+10:47:27:640 [INFO] Segmentation: Othonna_020 -> ID 20 | found=True
+10:47:27:642 [INFO] Segmentation: Othonna_021 -> ID 21 | found=True
+10:47:27:645 [INFO] Segmentation: Othonna_022 -> ID 22 | found=True
+10:47:27:647 [INFO] Segmentation: Othonna_023 -> ID 23 | found=True
+10:47:27:649 [INFO] Segmentation: Othonna_024 -> ID 24 | found=True
+10:47:27:651 [INFO] Segmentation: Othonna_025 -> ID 25 | found=True
+10:47:27:653 [INFO] Segmentation: Othonna_026 -> ID 26 | found=True
+10:47:27:657 [INFO] Segmentation: Othonna_027 -> ID 27 | found=True
+10:47:27:658 [INFO] Segmentation: Othonna_028 -> ID 28 | found=True
+10:47:27:661 [INFO] Segmentation: Othonna_029 -> ID 29 | found=True
+10:47:27:663 [INFO] Segmentation: Othonna_030 -> ID 30 | found=True
+10:47:27:663 [INFO] Taking off
+10:47:30:927 [INFO] Climbing vertically to 30.0 m before horizontal flight
+10:47:34:081 [INFO] Reached flight altitude 30.0 m
+10:47:34:081 [INFO] Flying to Othonna_001 at X=249.109, Y=302.953
+10:48:01:142 [INFO] Reached Othonna_001 - landing
+10:48:16:792 [INFO] Landed at Othonna_001
+10:48:16:793 [ERROR] Exception occurred: Connection reset
+Traceback (most recent call last):
+  File "C:\Users\cmdp7\OneDrive\Desktop\VISTA\src\Drone\hello_drone.py", line 396, in main
+    await telemetry_task
+  File "C:\Users\cmdp7\OneDrive\Desktop\VISTA\src\Drone\hello_drone.py", line 205, in display_telemetry
+    visible_plant_pixels = get_visible_plant_pixels(
+        drone,
+        target,
+    )
+  File "C:\Users\cmdp7\OneDrive\Desktop\VISTA\src\Drone\hello_drone.py", line 155, in get_visible_plant_pixels
+    responses = drone.get_images(
+        SEGMENTATION_CAMERA,
+        [ImageType.SEGMENTATION],
+    )
+  File "C:\Users\cmdp7\AppData\Roaming\Python\Python313\site-packages\projectairsim\drone.py", line 1203, in get_images
+    get_images_data = self.client.request(get_images_req)
+  File "C:\Users\cmdp7\AppData\Roaming\Python\Python313\site-packages\projectairsim\client.py", line 245, in request
+    response = self.socket_services.recv_msg()
+  File "C:\Users\cmdp7\AppData\Roaming\Python\Python313\site-packages\pynng\nng.py", line 635, in recv_msg
+    check_err(lib.nng_recvmsg(self.socket, msg_p, flags))
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\cmdp7\AppData\Roaming\Python\Python313\site-packages\pynng\exceptions.py", line 202, in check_err
+    raise exc(string, err)
+pynng.exceptions.ConnectionReset: Connection reset
+10:48:16:798 [INFO] Disconnecting from simulation server...
+10:48:17:814 [WARNING] Timed out while trying to unsubscribe from all topics.
+10:48:17:814 [INFO] Disconnected.
