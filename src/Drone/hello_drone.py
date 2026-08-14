@@ -1,5 +1,7 @@
+import argparse  
 import asyncio
 import csv
+import msvcrt  # Windows CMD keyboard input
 from pathlib import Path
 
 import numpy as np
@@ -9,7 +11,7 @@ from projectairsim.image_utils import SEGMENTATION_PALLETE
 from projectairsim.types import ImageType
 from projectairsim.utils import projectairsim_log, unpack_image
 
-
+import cv2
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -27,13 +29,21 @@ DRONE_NAME = "Drone1"
 SEGMENTATION_CAMERA = "DownCamera"
 
 FLIGHT_ALTITUDE_M = 30.0
-FLIGHT_VELOCITY_MPS = 17.0
+FLIGHT_VELOCITY_MPS = 5
 TELEMETRY_INTERVAL_SEC = 0.25
 
+
+
+MANUAL_HORIZONTAL_SPEED_MPS = 3.0
+MANUAL_VERTICAL_SPEED_MPS = 2.0
+MANUAL_COMMAND_DURATION_SEC = 0.20
+MANUAL_STOP_DURATION_SEC = 0.05
+
+
 # Precision settings for waypoint arrival.
-POSITION_TOLERANCE_M = 0.20
-FINAL_APPROACH_VELOCITY_MPS = 1.0
-MAX_POSITION_CORRECTIONS = 5
+POSITION_TOLERANCE_M = 1.0
+FINAL_APPROACH_VELOCITY_MPS = 0.2
+MAX_POSITION_CORRECTIONS = 15
 
 # After Project AirSim reports that a move has completed, keep watching the
 # ground-truth position for a short period instead of immediately consuming
@@ -42,6 +52,53 @@ POSITION_CHECK_INTERVAL_SEC = 0.10
 SETTLE_TIMEOUT_SEC = 3.0
 REQUIRED_GOOD_SAMPLES = 3
 
+# ---------------------------------------------------------------------------
+# Display segmentation window
+# ---------------------------------------------------------------------------
+
+
+async def camera_debug_viewer(drone, stop_event):
+    cv2.namedWindow("DownCamera - Segmentation", cv2.WINDOW_NORMAL)
+    cv2.namedWindow("DownCamera - X-Ray", cv2.WINDOW_NORMAL)
+
+    try:
+        while not stop_event.is_set():
+            images = drone.get_images(
+                "DownCamera",
+                [
+                    ImageType.SEGMENTATION,
+                    6,  # Rivelero X-ray channel
+                ],
+            )
+
+            if images:
+                segmentation_response = images[ImageType.SEGMENTATION]
+                xray_response = images[6]
+
+                segmentation_image = unpack_image(segmentation_response)
+                xray_image = unpack_image(xray_response)
+
+                cv2.imshow(
+                    "DownCamera - Segmentation",
+                    segmentation_image,
+                )
+
+                cv2.imshow(
+                    "DownCamera - X-Ray",
+                    xray_image,
+                )
+
+                # One waitKey() handles both OpenCV windows.
+                key = cv2.waitKey(1) & 0xFF
+
+                if key == ord("q") or key == 27:
+                    break
+
+            await asyncio.sleep(0.05)
+
+    finally:
+        cv2.destroyWindow("DownCamera - Segmentation")
+        cv2.destroyWindow("DownCamera - X-Ray")
 
 # ---------------------------------------------------------------------------
 # Load plant targets
@@ -163,7 +220,6 @@ def get_visible_plant_pixels(drone, target):
     Return the number of currently visible DownCamera pixels belonging
     to the target plant.
     """
-
     responses = drone.get_images(
         SEGMENTATION_CAMERA,
         [ImageType.SEGMENTATION],
@@ -178,9 +234,8 @@ def get_visible_plant_pixels(drone, target):
         dtype=np.uint8,
     )
 
-    # Use the first three channels in case the returned image happens to
-    # contain an alpha channel.
-    segmentation_rgb = segmentation_image[:, :, :3]
+    # Project AirSim's palette is RGB, but unpack_image gives us BGR here.
+    segmentation_rgb = segmentation_image[:, :, :3][:, :, ::-1]
 
     plant_mask = np.all(
         segmentation_rgb == plant_colour,
@@ -245,6 +300,110 @@ async def display_telemetry(drone, target):
 
 
 # ---------------------------------------------------------------------------
+#  Manual keyboard control
+# ---------------------------------------------------------------------------
+
+async def manual_keyboard_control(drone):
+    """
+    Control the drone from the Windows CMD/terminal window.
+
+    Project AirSim uses NED coordinates:
+      W/S -> north/south
+      A/D -> west/east
+      R/F -> up/down
+      T   -> take off
+      X   -> land
+      Q   -> leave manual mode
+
+    The movement keys send short velocity pulses. Holding a key also works
+    through Windows key-repeat, while releasing it lets the drone settle.
+    """
+
+    print(
+        "\n"
+        "=== MANUAL DRONE CONTROL ===\n"
+        "T       Take off\n"
+        "W / S   North / South\n"
+        "A / D   West / East\n"
+        "R / F   Up / Down\n"
+        "X       Land\n"
+        "Q       Quit manual mode (lands first)\n"
+        "\n"
+        "Keep this CMD window focused while flying.\n"
+    )
+
+    velocity_by_key = {
+        "w": (MANUAL_HORIZONTAL_SPEED_MPS, 0.0, 0.0),
+        "s": (-MANUAL_HORIZONTAL_SPEED_MPS, 0.0, 0.0),
+        "a": (0.0, -MANUAL_HORIZONTAL_SPEED_MPS, 0.0),
+        "d": (0.0, MANUAL_HORIZONTAL_SPEED_MPS, 0.0),
+        # NED uses positive Down, so Up is a negative down-velocity.
+        "r": (0.0, 0.0, -MANUAL_VERTICAL_SPEED_MPS),
+        "f": (0.0, 0.0, MANUAL_VERTICAL_SPEED_MPS),
+    }
+
+    while True:
+        # msvcrt.kbhit() is non-blocking, so the asyncio camera viewer can keep
+        # refreshing while we wait for a key.
+        if not msvcrt.kbhit():
+            await asyncio.sleep(0.02)
+            continue
+
+        key = msvcrt.getwch().lower()
+
+        # Ignore the prefix bytes used by Windows for special keys such as
+        # arrows/F-keys. We deliberately use ordinary letter keys here.
+        if key in ("\x00", "\xe0"):
+            if msvcrt.kbhit():
+                msvcrt.getwch()
+            continue
+
+        if key == "q":
+            projectairsim_log().info(
+                "Leaving manual control - landing first"
+            )
+            land_task = await drone.land_async()
+            await land_task
+            break
+
+        if key == "t":
+            projectairsim_log().info("Manual control: takeoff")
+            takeoff_task = await drone.takeoff_async()
+            await takeoff_task
+            continue
+
+        if key == "x":
+            projectairsim_log().info("Manual control: landing")
+            land_task = await drone.land_async()
+            await land_task
+            continue
+
+        velocity = velocity_by_key.get(key)
+        if velocity is None:
+            continue
+
+        v_north, v_east, v_down = velocity
+
+        move_task = await drone.move_by_velocity_async(
+            v_north=v_north,
+            v_east=v_east,
+            v_down=v_down,
+            duration=MANUAL_COMMAND_DURATION_SEC,
+        )
+        await move_task
+
+        # Explicitly command zero velocity after the pulse so a single tap does
+        # not leave the previous velocity setpoint active.
+        stop_task = await drone.move_by_velocity_async(
+            v_north=0.0,
+            v_east=0.0,
+            v_down=0.0,
+            duration=MANUAL_STOP_DURATION_SEC,
+        )
+        await stop_task
+
+
+# ---------------------------------------------------------------------------
 # Flight helpers
 # ---------------------------------------------------------------------------
 
@@ -269,7 +428,7 @@ async def move_to_target_precisely(drone, target):
 
     for attempt in range(MAX_POSITION_CORRECTIONS + 1):
         velocity = (
-            FLIGHT_VELOCITY_MPS
+            (FLIGHT_VELOCITY_MPS / 2)
             if attempt == 0
             else FINAL_APPROACH_VELOCITY_MPS
         )
@@ -316,8 +475,8 @@ async def move_to_target_precisely(drone, target):
             dy = target["y"] - current_y
             dz = target["z"] - current_z
 
-            horizontal_error = (dx**2 + dy**2) ** 0.5
-            vertical_error = abs(dz)
+            horizontal_error = (dx**2 + dy**2) ** 0.5 #error distance from target.
+            vertical_error = abs(dz) 
 
             last_x = current_x
             last_y = current_y
@@ -425,7 +584,7 @@ async def climb_to_flight_altitude(drone):
 # Main flight
 # ---------------------------------------------------------------------------
 
-async def main():
+async def main(manual=False): 
     client = ProjectAirSimClient()
 
     try:
@@ -459,17 +618,63 @@ async def main():
             len(targets),
         )
 
-        if not targets:
+   
+        # Manual control itself does not require flightpath.csv targets.
+        # If targets do exist, keep configuring their segmentation IDs so the
+        # existing debug camera remains useful in manual mode.
+        if targets:
+            configure_plant_segmentation(
+                world,
+                targets,
+            )
+        elif manual:
+            projectairsim_log().warning(
+                "No targets found in flightpath.csv; manual control will "
+                "continue without plant-specific segmentation IDs"
+            )
+        else:
             projectairsim_log().warning(
                 "No targets found in flightpath.csv"
             )
             return
+    
 
-        # Assign segmentation IDs once, before the flight begins.
-        configure_plant_segmentation(
-            world,
-            targets,
+        #show segmentation camera feed in a separate window.
+        segmentation_stop = asyncio.Event()
+
+        segmentation_task = asyncio.create_task(
+            camera_debug_viewer(drone, segmentation_stop)
         )
+
+
+        # --manual uses the same connected/armed drone and camera viewer, but
+        # skips the autonomous plant-by-plant flight path.
+        if manual:
+            projectairsim_log().info("Manual keyboard-control mode enabled")
+
+            try:
+                await manual_keyboard_control(drone)
+            finally:
+                segmentation_stop.set()
+                await segmentation_task
+
+                # Safety fallback: if manual mode exits because of an exception,
+                # attempt to land before disarming rather than dropping the drone.
+                try:
+                    land_task = await drone.land_async()
+                    await land_task
+                except Exception as land_err:
+                    projectairsim_log().warning(
+                        "Could not complete cleanup landing: %s",
+                        land_err,
+                    )
+
+                drone.disarm()
+                drone.disable_api_control()
+
+
+            return
+
 
         # Initial takeoff.
         projectairsim_log().info("Taking off")
@@ -576,5 +781,19 @@ async def main():
         client.disconnect()
 
 
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Run the Rivelero Project AirSim drone mission."
+    )
+    parser.add_argument(
+        "--manual",
+        action="store_true",
+        help="Use keyboard control instead of the automatic flight path.",
+    )
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    args = parse_args()
+    asyncio.run(main(manual=args.manual))

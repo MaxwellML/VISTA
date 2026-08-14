@@ -400,14 +400,15 @@
           "compress": false
         },
         {
-          "image-type": 6,  // surface normals
+          "image-type": 6,  //custom target-only X-ray segmentation
           "width": 400,
           "height": 225,
           "fov-degrees": 90,
-          "capture-enabled": false,
-          "streaming-enabled": false,
+          "capture-enabled": true,
+          "streaming-enabled": true,
           "pixels-as-float": false,
-          "compress": false
+          "compress": false,
+          "target-gamma": 2.5
         }
       ],
       "noise-settings": [
