@@ -159,6 +159,17 @@ print(
 
 height, width = depth_cm.shape
 
+# Quick diagnostic for checking the SceneDepth interpretation.
+cy = height // 2
+cx = width // 2
+print()
+print("----- DEPTH DIAGNOSTIC -----")
+print(f"Centre:       {depth_cm[cy, cx]:.3f} cm")
+print(f"Left-middle:  {depth_cm[cy, 0]:.3f} cm")
+print(f"Right-middle: {depth_cm[cy, -1]:.3f} cm")
+print(f"Top-middle:   {depth_cm[0, cx]:.3f} cm")
+print(f"Corner:       {depth_cm[0, 0]:.3f} cm")
+
 aspect = width / height
 horizontal_fov_rad = np.deg2rad(HORIZONTAL_FOV_DEG)
 
@@ -188,7 +199,7 @@ v = (
 
 u_grid, v_grid = np.meshgrid(u, v)
 
-# Camera-local direction before normalization:
+# Camera-local ray direction before normalization:
 #
 # [forward, right, up] =
 # [1,
@@ -197,6 +208,19 @@ u_grid, v_grid = np.meshgrid(u, v)
 ray_forward = np.ones_like(u_grid, dtype=np.float64)
 ray_right = u_grid * tan_half_hfov
 ray_up = v_grid * tan_half_vfov
+
+# SceneDepth is treated as distance ALONG the viewing ray.
+# Therefore the direction vector must have unit length before
+# multiplying it by the depth value.
+ray_length = np.sqrt(
+    ray_forward**2
+    + ray_right**2
+    + ray_up**2
+)
+
+ray_forward /= ray_length
+ray_right /= ray_length
+ray_up /= ray_length
 
 
 # ============================================================
@@ -213,7 +237,7 @@ ray_up = v_grid * tan_half_vfov
 #   camera local +right   -> world +Y
 #   camera local +up      -> world +X
 #
-# So:
+# The vectors below are already normalized.
 ray_world_x = ray_up
 ray_world_y = ray_right
 ray_world_z = -ray_forward
@@ -223,28 +247,14 @@ ray_world_z = -ray_forward
 # BACK-PROJECT PERSPECTIVE SCENE DEPTH
 # ============================================================
 #
-# Unreal SceneDepth here is view-space/forward depth,
-# NOT Euclidean distance along a normalized viewing ray.
+# Treat each SceneDepth value as Euclidean distance from the
+# capture origin along that pixel's viewing ray:
 #
-# For a perspective camera:
+#   world_point = camera_position + depth * normalized_world_ray
 #
-# camera-local point =
-#
-#   forward = depth
-#   right   = depth * u * tan(HFOV / 2)
-#   up      = depth * v * tan(VFOV / 2)
-#
-# Camera orientation:
-#
-#   Pitch = -90 / 270
-#   Yaw   = 0
-#   Roll  = 0
-#
-# Therefore:
-#
-#   camera forward -> world -Z
-#   camera right   -> world +Y
-#   camera up      -> world +X
+# This is important away from the image centre. The full ray
+# distance must be split into its X/Y/Z components; using the
+# entire value as vertical depth produces a radial/fisheye bowl.
 
 valid = (
     np.isfinite(depth_cm)
@@ -257,14 +267,6 @@ if not np.any(valid):
     )
 
 depth_cm_64 = depth_cm.astype(np.float64)
-
-camera_right_offset_cm = (
-    depth_cm_64 * u_grid * tan_half_hfov
-)
-
-camera_up_offset_cm = (
-    depth_cm_64 * v_grid * tan_half_vfov
-)
 
 world_x_cm = np.full(
     depth_cm.shape,
@@ -286,17 +288,17 @@ world_z_cm = np.full(
 
 world_x_cm[valid] = (
     CAPTURE_X_CM
-    + camera_up_offset_cm[valid]
+    + depth_cm_64[valid] * ray_world_x[valid]
 )
 
 world_y_cm[valid] = (
     CAPTURE_Y_CM
-    + camera_right_offset_cm[valid]
+    + depth_cm_64[valid] * ray_world_y[valid]
 )
 
 world_z_cm[valid] = (
     CAPTURE_Z_CM
-    - depth_cm_64[valid]
+    + depth_cm_64[valid] * ray_world_z[valid]
 )
 
 world_x_m = world_x_cm / 100.0
@@ -459,7 +461,7 @@ with rasterio.open(
     dst.update_tags(
         source="Unreal Engine SceneCapture2D Perspective SceneDepth DSM",
         coordinate_mode=UNREAL_LOCAL_COORDINATE_MODE,
-        capture_source="SceneDepth in R",
+        capture_source="SceneDepth in R (ray-distance interpretation)",
         projection_type="Perspective",
         horizontal_fov_deg=str(HORIZONTAL_FOV_DEG),
         unreal_capture_x_cm=str(CAPTURE_X_CM),

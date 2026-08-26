@@ -290,10 +290,19 @@ async def display_telemetry(drone, target):
         )
 
         # Unreal's DroneTelemetryHUD actor reads this file.
-        TELEMETRY_FILE.write_text(
-            message,
-            encoding="utf-8",
-        )
+        for attempt in range(3):
+            try:
+                TELEMETRY_FILE.write_text(
+                    message,
+                    encoding="utf-8",
+                )
+                break
+
+            except PermissionError as e:
+                if attempt < 2:
+                    await asyncio.sleep(0.1)
+                else:
+                    print(f"\n[WARNING] Could not write telemetry file: {e}")
 
         # Refresh at the configured telemetry interval.
         await asyncio.sleep(TELEMETRY_INTERVAL_SEC)
