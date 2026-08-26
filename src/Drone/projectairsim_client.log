@@ -1,113 +1,92 @@
-09:53:05:645 [INFO] Connecting to simulation server at 127.0.0.1
-09:53:05:652 [INFO] Connection opened.
-09:53:05:652 [INFO] Started the pub-sub topic receiving thread.
-09:53:05:652 [INFO] Loading scene config: scene_basic_drone.jsonc
-09:53:12:304 [INFO] Getting the list of available topic info from the sim server...
-09:53:12:315 [INFO] Successfully received topic info list.
-09:53:14:315 [INFO] World object updated for the loaded scene '/Sim/SceneBasicDrone'. Note: Any previous Drone object instances may no longer be valid.
-09:53:14:318 [INFO] Trajectory 'null_trajectory' imported successfully.
-09:53:14:318 [INFO] Initalizing Drone 'Drone1'...
-09:53:14:318 [INFO] -------------------------------------------------
-09:53:14:319 [INFO] The following topics can be subscribed to for robot 'Drone1':
-09:53:14:319 [INFO]     sensors["Chase"]["scene_camera"]
-09:53:14:319 [INFO]     sensors["Chase"]["scene_camera_info"]
-09:53:14:319 [INFO]     sensors["DownCamera"]["scene_camera"]
-09:53:14:319 [INFO]     sensors["DownCamera"]["scene_camera_info"]
-09:53:14:320 [INFO]     sensors["DownCamera"]["depth_camera"]
-09:53:14:320 [INFO]     sensors["DownCamera"]["depth_camera_info"]
-09:53:14:320 [INFO]     sensors["DownCamera"]["segmentation_camera"]
-09:53:14:320 [INFO]     sensors["DownCamera"]["segmentation_camera_info"]
-09:53:14:320 [INFO]     sensors["DownCamera"]["surface_normals_camera"]
-09:53:14:320 [INFO]     sensors["DownCamera"]["surface_normals_camera_info"]
-09:53:14:320 [INFO]     sensors["IMU1"]["imu_kinematics"]
-09:53:14:320 [INFO]     sensors["GPS"]["gps"]
-09:53:14:320 [INFO]     sensors["Barometer"]["barometer"]
-09:53:14:321 [INFO]     sensors["Magnetometer"]["magnetometer"]
-09:53:14:321 [INFO]     robot_info["actual_pose"]
-09:53:14:321 [INFO]     robot_info["collision_info"]
-09:53:14:321 [INFO]     robot_info["rotor_info"]
-09:53:14:321 [INFO] -------------------------------------------------
-09:53:14:321 [INFO] Drone 'Drone1' initialized for World scene '/Sim/SceneBasicDrone'
-09:53:14:712 [INFO] Loaded 30 plant targets
-09:53:14:714 [INFO] Resetting scene segmentation IDs to 0
-09:53:14:736 [INFO] Segmentation: Othonna_001 -> ID 1 | found=True
-09:53:14:742 [INFO] Segmentation: Othonna_002 -> ID 2 | found=True
-09:53:14:747 [INFO] Segmentation: Othonna_003 -> ID 3 | found=True
-09:53:14:756 [INFO] Segmentation: Othonna_004 -> ID 4 | found=True
-09:53:14:760 [INFO] Segmentation: Othonna_005 -> ID 5 | found=True
-09:53:14:766 [INFO] Segmentation: Othonna_006 -> ID 6 | found=True
-09:53:14:771 [INFO] Segmentation: Othonna_007 -> ID 7 | found=True
-09:53:14:782 [INFO] Segmentation: Othonna_008 -> ID 8 | found=True
-09:53:14:788 [INFO] Segmentation: Othonna_009 -> ID 9 | found=True
-09:53:14:792 [INFO] Segmentation: Othonna_010 -> ID 10 | found=True
-09:53:14:796 [INFO] Segmentation: Othonna_011 -> ID 11 | found=True
-09:53:14:801 [INFO] Segmentation: Othonna_012 -> ID 12 | found=True
-09:53:14:808 [INFO] Segmentation: Othonna_013 -> ID 13 | found=True
-09:53:14:816 [INFO] Segmentation: Othonna_014 -> ID 14 | found=True
-09:53:14:825 [INFO] Segmentation: Othonna_015 -> ID 15 | found=True
-09:53:14:828 [INFO] Segmentation: Othonna_016 -> ID 16 | found=True
-09:53:14:833 [INFO] Segmentation: Othonna_017 -> ID 17 | found=True
-09:53:15:076 [INFO] Segmentation: Othonna_018 -> ID 18 | found=True
-09:53:15:086 [INFO] Segmentation: Othonna_019 -> ID 19 | found=True
-09:53:15:090 [INFO] Segmentation: Othonna_020 -> ID 20 | found=True
-09:53:15:094 [INFO] Segmentation: Othonna_021 -> ID 21 | found=True
-09:53:15:107 [INFO] Segmentation: Othonna_022 -> ID 22 | found=True
-09:53:15:112 [INFO] Segmentation: Othonna_023 -> ID 23 | found=True
-09:53:15:116 [INFO] Segmentation: Othonna_024 -> ID 24 | found=True
-09:53:15:123 [INFO] Segmentation: Othonna_025 -> ID 25 | found=True
-09:53:15:132 [INFO] Segmentation: Othonna_026 -> ID 26 | found=True
-09:53:15:143 [INFO] Segmentation: Othonna_027 -> ID 27 | found=True
-09:53:15:152 [INFO] Segmentation: Othonna_028 -> ID 28 | found=True
-09:53:15:181 [INFO] Segmentation: Othonna_029 -> ID 29 | found=True
-09:53:15:189 [INFO] Segmentation: Othonna_030 -> ID 30 | found=True
-09:53:15:194 [INFO] Taking off
-09:53:18:482 [INFO] Climbing vertically to 30.0 m before horizontal flight
-09:53:24:716 [INFO] Reached flight altitude 30.0 m
-09:53:24:717 [INFO] Flying to Othonna_001 at X=249.109, Y=302.953
-09:53:24:717 [INFO] Positioning Othonna_001: attempt 1/16 at 2.5 m/s | target NED=(249.1090000, 302.9530000, -30.0000000)
-09:56:09:439 [INFO] Controller reports move complete for Othonna_001; watching position for up to 3.0 s
-09:56:09:440 [INFO] Settling Othonna_001 | actual=(249.2025604, 303.0668030, -29.5285702) | horizontal error=0.147 m vertical error=0.471 m | good samples=1/3
-09:56:09:753 [INFO] Settling Othonna_001 | actual=(249.5543060, 303.4980164, -29.6050549) | horizontal error=0.704 m vertical error=0.395 m | good samples=2/3
-09:56:10:034 [INFO] Settling Othonna_001 | actual=(249.7533875, 303.7701721, -29.6272373) | horizontal error=1.041 m vertical error=0.373 m | good samples=0/3
-09:56:10:314 [INFO] Settling Othonna_001 | actual=(249.8337250, 303.9527588, -29.6095295) | horizontal error=1.235 m vertical error=0.390 m | good samples=0/3
-09:56:10:596 [INFO] Settling Othonna_001 | actual=(249.8038483, 304.0655212, -29.5760555) | horizontal error=1.312 m vertical error=0.424 m | good samples=0/3
-09:56:10:893 [INFO] Settling Othonna_001 | actual=(249.6730804, 304.1236267, -29.5427589) | horizontal error=1.299 m vertical error=0.457 m | good samples=0/3
-09:56:11:172 [INFO] Settling Othonna_001 | actual=(249.4868317, 304.1278992, -29.5224323) | horizontal error=1.234 m vertical error=0.478 m | good samples=0/3
-09:56:11:468 [INFO] Settling Othonna_001 | actual=(249.2530823, 304.0842590, -29.5132618) | horizontal error=1.140 m vertical error=0.487 m | good samples=0/3
-09:56:11:748 [INFO] Settling Othonna_001 | actual=(249.0196838, 303.9980774, -29.5132866) | horizontal error=1.049 m vertical error=0.487 m | good samples=0/3
-09:56:12:046 [INFO] Settling Othonna_001 | actual=(248.7884979, 303.8634033, -29.5180798) | horizontal error=0.965 m vertical error=0.482 m | good samples=1/3
-09:56:12:328 [INFO] Settling Othonna_001 | actual=(248.6000519, 303.6968994, -29.5236435) | horizontal error=0.901 m vertical error=0.476 m | good samples=2/3
-09:56:12:625 [WARNING] Othonna_001 did not settle within 1.00 m after 3.0 s | last horizontal error=0.901 m vertical error=0.476 m; starting correction 1/15 at 0.2 m/s
-09:56:12:625 [INFO] Positioning Othonna_001: attempt 2/16 at 0.2 m/s | target NED=(249.1090000, 302.9530000, -30.0000000)
-09:56:12:923 [INFO] Controller reports move complete for Othonna_001; watching position for up to 3.0 s
-09:56:12:924 [INFO] Settling Othonna_001 | actual=(248.3615417, 303.2788086, -29.5184498) | horizontal error=0.815 m vertical error=0.482 m | good samples=1/3
-09:56:13:204 [INFO] Settling Othonna_001 | actual=(248.3166046, 303.1201782, -29.5091019) | horizontal error=0.810 m vertical error=0.491 m | good samples=2/3
-09:56:13:516 [INFO] Settling Othonna_001 | actual=(248.2963257, 303.0016174, -29.5030518) | horizontal error=0.814 m vertical error=0.497 m | good samples=3/3
-09:56:13:516 [INFO] Confirmed Othonna_001 within 1.00 m tolerance for 3 consecutive samples | accepted position=(248.2963257, 303.0016174, -29.5030518)
-09:56:13:517 [INFO] Waypoint accepted for Othonna_001 - beginning descent | target=(249.109000, 302.953000, -30.000000) | actual=(248.296326, 303.001617, -29.503052)
-09:56:32:761 [INFO] Landed at Othonna_001
-09:56:32:761 [ERROR] Exception occurred: [Errno 13] Permission denied: 'C:\\Users\\cmdp7\\OneDrive\\Documents\\Unreal Projects\\RiveleroCaseStudy\\Saved\\drone_telemetry.txt'
+12:35:12:970 [INFO] Connecting to simulation server at 127.0.0.1
+12:35:12:981 [INFO] Connection opened.
+12:35:12:982 [INFO] Started the pub-sub topic receiving thread.
+12:35:12:982 [INFO] Loading scene config: scene_basic_drone.jsonc
+12:35:13:554 [INFO] Getting the list of available topic info from the sim server...
+12:35:13:565 [INFO] Successfully received topic info list.
+12:35:15:566 [INFO] World object updated for the loaded scene '/Sim/SceneBasicDrone'. Note: Any previous Drone object instances may no longer be valid.
+12:35:15:569 [INFO] Trajectory 'null_trajectory' imported successfully.
+12:35:15:570 [INFO] Initalizing Drone 'Drone1'...
+12:35:15:570 [INFO] -------------------------------------------------
+12:35:15:570 [INFO] The following topics can be subscribed to for robot 'Drone1':
+12:35:15:571 [INFO]     sensors["Chase"]["scene_camera"]
+12:35:15:571 [INFO]     sensors["Chase"]["scene_camera_info"]
+12:35:15:571 [INFO]     sensors["DownCamera"]["scene_camera"]
+12:35:15:571 [INFO]     sensors["DownCamera"]["scene_camera_info"]
+12:35:15:571 [INFO]     sensors["DownCamera"]["depth_camera"]
+12:35:15:571 [INFO]     sensors["DownCamera"]["depth_camera_info"]
+12:35:15:572 [INFO]     sensors["DownCamera"]["segmentation_camera"]
+12:35:15:572 [INFO]     sensors["DownCamera"]["segmentation_camera_info"]
+12:35:15:572 [INFO]     sensors["DownCamera"]["surface_normals_camera"]
+12:35:15:572 [INFO]     sensors["DownCamera"]["surface_normals_camera_info"]
+12:35:15:572 [INFO]     sensors["IMU1"]["imu_kinematics"]
+12:35:15:572 [INFO]     sensors["GPS"]["gps"]
+12:35:15:572 [INFO]     sensors["Barometer"]["barometer"]
+12:35:15:574 [INFO]     sensors["Magnetometer"]["magnetometer"]
+12:35:15:575 [INFO]     robot_info["actual_pose"]
+12:35:15:575 [INFO]     robot_info["collision_info"]
+12:35:15:575 [INFO]     robot_info["rotor_info"]
+12:35:15:575 [INFO] -------------------------------------------------
+12:35:15:576 [INFO] Drone 'Drone1' initialized for World scene '/Sim/SceneBasicDrone'
+12:35:15:580 [INFO] Loaded 30 plant targets
+12:35:15:580 [INFO] Resetting scene segmentation IDs to 0
+12:35:15:659 [INFO] Segmentation: Othonna_001 -> ID 1 | found=True
+12:35:15:668 [INFO] Segmentation: Othonna_002 -> ID 2 | found=True
+12:35:15:675 [INFO] Segmentation: Othonna_003 -> ID 3 | found=True
+12:35:15:682 [INFO] Segmentation: Othonna_004 -> ID 4 | found=True
+12:35:15:685 [INFO] Segmentation: Othonna_005 -> ID 5 | found=True
+12:35:16:079 [INFO] Segmentation: Othonna_006 -> ID 6 | found=True
+12:35:16:095 [INFO] Segmentation: Othonna_007 -> ID 7 | found=True
+12:35:16:111 [INFO] Segmentation: Othonna_008 -> ID 8 | found=True
+12:35:16:118 [INFO] Segmentation: Othonna_009 -> ID 9 | found=True
+12:35:16:124 [INFO] Segmentation: Othonna_010 -> ID 10 | found=True
+12:35:16:129 [INFO] Segmentation: Othonna_011 -> ID 11 | found=True
+12:35:16:134 [INFO] Segmentation: Othonna_012 -> ID 12 | found=True
+12:35:16:140 [INFO] Segmentation: Othonna_013 -> ID 13 | found=True
+12:35:16:147 [INFO] Segmentation: Othonna_014 -> ID 14 | found=True
+12:35:16:151 [INFO] Segmentation: Othonna_015 -> ID 15 | found=True
+12:35:16:155 [INFO] Segmentation: Othonna_016 -> ID 16 | found=True
+12:35:16:165 [INFO] Segmentation: Othonna_017 -> ID 17 | found=True
+12:35:16:178 [INFO] Segmentation: Othonna_018 -> ID 18 | found=True
+12:35:16:190 [INFO] Segmentation: Othonna_019 -> ID 19 | found=True
+12:35:16:197 [INFO] Segmentation: Othonna_020 -> ID 20 | found=True
+12:35:16:200 [INFO] Segmentation: Othonna_021 -> ID 21 | found=True
+12:35:16:202 [INFO] Segmentation: Othonna_022 -> ID 22 | found=True
+12:35:16:233 [INFO] Segmentation: Othonna_023 -> ID 23 | found=True
+12:35:16:236 [INFO] Segmentation: Othonna_024 -> ID 24 | found=True
+12:35:16:239 [INFO] Segmentation: Othonna_025 -> ID 25 | found=True
+12:35:16:243 [INFO] Segmentation: Othonna_026 -> ID 26 | found=True
+12:35:16:246 [INFO] Segmentation: Othonna_027 -> ID 27 | found=True
+12:35:16:249 [INFO] Segmentation: Othonna_028 -> ID 28 | found=True
+12:35:16:253 [INFO] Segmentation: Othonna_029 -> ID 29 | found=True
+12:35:16:255 [INFO] Segmentation: Othonna_030 -> ID 30 | found=True
+12:35:16:256 [INFO] Taking off
+12:35:19:195 [INFO] Climbing vertically to 30.0 m before horizontal flight
+12:35:24:929 [INFO] Reached flight altitude 30.0 m
+12:35:24:934 [INFO] Loaded 28 sweep waypoints
+12:35:24:934 [INFO] Moving to sweep start A at X=372.000, Y=-381.825
+12:35:24:935 [INFO] Positioning A: attempt 1/16 at 5.0 m/s | waypoint NED=(372.0000000, -381.8250000, -30.0000000)
+12:38:07:007 [INFO] Controller reports move complete for A; watching position for up to 3.0 s
+12:38:07:008 [INFO] Settling A | actual=(305.4953613, -313.7633667, -30.2038784) | horizontal error=95.159 m vertical error=0.204 m | good samples=0/3
+12:38:08:126 [ERROR] Exception occurred: Timed out
 Traceback (most recent call last):
-  File "C:\Users\cmdp7\OneDrive\Desktop\VISTA\src\Drone\hello_drone.py", line 749, in main
-    await telemetry_task
-  File "C:\Users\cmdp7\OneDrive\Desktop\VISTA\src\Drone\hello_drone.py", line 293, in display_telemetry
-    TELEMETRY_FILE.write_text(
-    ~~~~~~~~~~~~~~~~~~~~~~~~~^
-        message,
-        ^^^^^^^^
-        encoding="utf-8",
-        ^^^^^^^^^^^^^^^^^
+  File "C:\Users\cmdp7\OneDrive\Desktop\VISTA\src\Drone\hello_drone.py", line 924, in main
+    await move_to_waypoint_precisely(
+    ...<2 lines>...
     )
-    ^
-  File "C:\Python313\Lib\pathlib\_local.py", line 555, in write_text
-    return PathBase.write_text(self, data, encoding, errors, newline)
-           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Python313\Lib\pathlib\_abc.py", line 651, in write_text
-    with self.open(mode='w', encoding=encoding, errors=errors, newline=newline) as f:
-         ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Python313\Lib\pathlib\_local.py", line 537, in open
-    return io.open(self, mode, buffering, encoding, errors, newline)
-           ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-PermissionError: [Errno 13] Permission denied: 'C:\\Users\\cmdp7\\OneDrive\\Documents\\Unreal Projects\\RiveleroCaseStudy\\Saved\\drone_telemetry.txt'
-09:56:32:787 [INFO] Disconnecting from simulation server...
-09:56:32:822 [INFO] Disconnected.
+  File "C:\Users\cmdp7\OneDrive\Desktop\VISTA\src\Drone\hello_drone.py", line 681, in move_to_waypoint_precisely
+    pose = drone.get_ground_truth_pose()
+  File "C:\Users\cmdp7\AppData\Roaming\Python\Python313\site-packages\projectairsim\drone.py", line 939, in get_ground_truth_pose
+    pose = self.client.request(get_pose_req)
+  File "C:\Users\cmdp7\AppData\Roaming\Python\Python313\site-packages\projectairsim\client.py", line 243, in request
+    self.socket_services.send(request_packed)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^
+  File "C:\Users\cmdp7\AppData\Roaming\Python\Python313\site-packages\pynng\nng.py", line 493, in send
+    check_err(err)
+    ~~~~~~~~~^^^^^
+  File "C:\Users\cmdp7\AppData\Roaming\Python\Python313\site-packages\pynng\exceptions.py", line 202, in check_err
+    raise exc(string, err)
+pynng.exceptions.Timeout: Timed out
+12:38:08:131 [INFO] Disconnecting from simulation server...
+12:38:09:147 [WARNING] Timed out while trying to unsubscribe from all topics.
+12:38:09:147 [INFO] Disconnected.

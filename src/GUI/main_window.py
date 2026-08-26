@@ -431,14 +431,14 @@ class MainWindow(QMainWindow):
 
         self.viewpoint_table = QTableWidget(0, 3)
 
-        # --- CHANGED: show X/Y for Unreal-local DEMs and lat/lon otherwise.
+
         second_header, third_header = (
             self._viewpoint_table_coordinate_headers()
         )
         self.viewpoint_table.setHorizontalHeaderLabels(
             ["#", second_header, third_header]
         )
-        # --- END CHANGED ---
+
         self.viewpoint_table.verticalHeader().setVisible(False)
         self.viewpoint_table.setEditTriggers(
             QAbstractItemView.EditTrigger.NoEditTriggers
@@ -746,13 +746,12 @@ class MainWindow(QMainWindow):
         )
 
         for identifier, region in enumerate(merged_regions, start=1):
-            # --- CHANGED: keep local Unreal X/Y values unchanged.
+
             longitude, latitude = self._stored_coordinates_from_map_point(
                 region.x,
                 region.y,
             )
-            # --- END CHANGED ---
-
+         
             source_identifiers = tuple(
                 self.original_viewpoints[index].identifier
                 for index in region.source_indices
@@ -780,7 +779,7 @@ class MainWindow(QMainWindow):
             self.viewpoint_table.setRowCount(0)
             self.dem_view.clear_viewpoint_markers()
 
-            # --- CHANGED: table labels follow the DEM coordinate mode.
+
             second_header, third_header = (
                 self._viewpoint_table_coordinate_headers()
             )
@@ -791,8 +790,7 @@ class MainWindow(QMainWindow):
                     third_header,
                 ]
             )
-            # --- END CHANGED ---
-
+  
             for viewpoint in viewpoints:
                 if viewpoint.square_bounds is None:
                     self.dem_view.add_viewpoint_marker(
@@ -874,7 +872,7 @@ class MainWindow(QMainWindow):
 
         map_x, map_y = point
 
-        # --- CHANGED: local Unreal X/Y is already in the required map frame.
+
         try:
             longitude, latitude = self._stored_coordinates_from_map_point(
                 map_x,
@@ -886,7 +884,7 @@ class MainWindow(QMainWindow):
                 str(error),
             )
             return
-        # --- END CHANGED ---
+
 
         self._store_viewpoint(
             map_x=map_x,
@@ -982,7 +980,6 @@ class MainWindow(QMainWindow):
         if viewpoint is None:
             return
 
-        # --- CHANGED: status text follows the active coordinate mode.
         location_text = self._format_map_position(
             viewpoint.map_x,
             viewpoint.map_y,
@@ -999,7 +996,6 @@ class MainWindow(QMainWindow):
                 f"Original viewpoint {identifier} selected at "
                 f"{location_text}."
             )
-        # --- END CHANGED ---
 
     def _clear_viewpoints(self) -> None:
         """Clear both exact and downsampled viewpoint representations."""
@@ -1069,7 +1065,7 @@ class MainWindow(QMainWindow):
                     for heading in reader.fieldnames
                 }
 
-                # --- CHANGED: choose CSV columns from the DEM coordinate mode.
+
                 if self._dem_is_unreal_local:
                     x_heading = (
                         headings.get("x")
@@ -1148,7 +1144,7 @@ class MainWindow(QMainWindow):
                         pending.append(
                             (map_x, map_y, longitude, latitude)
                         )
-                # --- END CHANGED ---
+  
 
         except (OSError, ValueError) as error:
             self._show_error("CSV import failed", str(error))
