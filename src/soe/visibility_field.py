@@ -337,9 +337,9 @@ def build_visibility_field(
                 temporary_observer_height=target_height_m,
                 temporary_target_height=observer_height_m,
                 max_distance_m=max_distance_m,
-                # --- CHANGED: Unreal-local viewsheds are flat. ---
+
                 curvature_coefficient=effective_curvature_coefficient,
-                # --- END CHANGED ---
+
             )
 
             try:

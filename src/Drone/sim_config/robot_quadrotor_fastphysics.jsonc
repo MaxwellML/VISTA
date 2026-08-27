@@ -24,6 +24,9 @@
         }
       },
       "collision": {
+        // >>> CHANGED: disable collision for the drone Frame so it can pass through obstacles.
+        "enabled": false,
+        // <<< CHANGED
         "restitution": 0.1,
         "friction": 0.5
       },

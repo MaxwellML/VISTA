@@ -1,92 +1,68 @@
-12:35:12:970 [INFO] Connecting to simulation server at 127.0.0.1
-12:35:12:981 [INFO] Connection opened.
-12:35:12:982 [INFO] Started the pub-sub topic receiving thread.
-12:35:12:982 [INFO] Loading scene config: scene_basic_drone.jsonc
-12:35:13:554 [INFO] Getting the list of available topic info from the sim server...
-12:35:13:565 [INFO] Successfully received topic info list.
-12:35:15:566 [INFO] World object updated for the loaded scene '/Sim/SceneBasicDrone'. Note: Any previous Drone object instances may no longer be valid.
-12:35:15:569 [INFO] Trajectory 'null_trajectory' imported successfully.
-12:35:15:570 [INFO] Initalizing Drone 'Drone1'...
-12:35:15:570 [INFO] -------------------------------------------------
-12:35:15:570 [INFO] The following topics can be subscribed to for robot 'Drone1':
-12:35:15:571 [INFO]     sensors["Chase"]["scene_camera"]
-12:35:15:571 [INFO]     sensors["Chase"]["scene_camera_info"]
-12:35:15:571 [INFO]     sensors["DownCamera"]["scene_camera"]
-12:35:15:571 [INFO]     sensors["DownCamera"]["scene_camera_info"]
-12:35:15:571 [INFO]     sensors["DownCamera"]["depth_camera"]
-12:35:15:571 [INFO]     sensors["DownCamera"]["depth_camera_info"]
-12:35:15:572 [INFO]     sensors["DownCamera"]["segmentation_camera"]
-12:35:15:572 [INFO]     sensors["DownCamera"]["segmentation_camera_info"]
-12:35:15:572 [INFO]     sensors["DownCamera"]["surface_normals_camera"]
-12:35:15:572 [INFO]     sensors["DownCamera"]["surface_normals_camera_info"]
-12:35:15:572 [INFO]     sensors["IMU1"]["imu_kinematics"]
-12:35:15:572 [INFO]     sensors["GPS"]["gps"]
-12:35:15:572 [INFO]     sensors["Barometer"]["barometer"]
-12:35:15:574 [INFO]     sensors["Magnetometer"]["magnetometer"]
-12:35:15:575 [INFO]     robot_info["actual_pose"]
-12:35:15:575 [INFO]     robot_info["collision_info"]
-12:35:15:575 [INFO]     robot_info["rotor_info"]
-12:35:15:575 [INFO] -------------------------------------------------
-12:35:15:576 [INFO] Drone 'Drone1' initialized for World scene '/Sim/SceneBasicDrone'
-12:35:15:580 [INFO] Loaded 30 plant targets
-12:35:15:580 [INFO] Resetting scene segmentation IDs to 0
-12:35:15:659 [INFO] Segmentation: Othonna_001 -> ID 1 | found=True
-12:35:15:668 [INFO] Segmentation: Othonna_002 -> ID 2 | found=True
-12:35:15:675 [INFO] Segmentation: Othonna_003 -> ID 3 | found=True
-12:35:15:682 [INFO] Segmentation: Othonna_004 -> ID 4 | found=True
-12:35:15:685 [INFO] Segmentation: Othonna_005 -> ID 5 | found=True
-12:35:16:079 [INFO] Segmentation: Othonna_006 -> ID 6 | found=True
-12:35:16:095 [INFO] Segmentation: Othonna_007 -> ID 7 | found=True
-12:35:16:111 [INFO] Segmentation: Othonna_008 -> ID 8 | found=True
-12:35:16:118 [INFO] Segmentation: Othonna_009 -> ID 9 | found=True
-12:35:16:124 [INFO] Segmentation: Othonna_010 -> ID 10 | found=True
-12:35:16:129 [INFO] Segmentation: Othonna_011 -> ID 11 | found=True
-12:35:16:134 [INFO] Segmentation: Othonna_012 -> ID 12 | found=True
-12:35:16:140 [INFO] Segmentation: Othonna_013 -> ID 13 | found=True
-12:35:16:147 [INFO] Segmentation: Othonna_014 -> ID 14 | found=True
-12:35:16:151 [INFO] Segmentation: Othonna_015 -> ID 15 | found=True
-12:35:16:155 [INFO] Segmentation: Othonna_016 -> ID 16 | found=True
-12:35:16:165 [INFO] Segmentation: Othonna_017 -> ID 17 | found=True
-12:35:16:178 [INFO] Segmentation: Othonna_018 -> ID 18 | found=True
-12:35:16:190 [INFO] Segmentation: Othonna_019 -> ID 19 | found=True
-12:35:16:197 [INFO] Segmentation: Othonna_020 -> ID 20 | found=True
-12:35:16:200 [INFO] Segmentation: Othonna_021 -> ID 21 | found=True
-12:35:16:202 [INFO] Segmentation: Othonna_022 -> ID 22 | found=True
-12:35:16:233 [INFO] Segmentation: Othonna_023 -> ID 23 | found=True
-12:35:16:236 [INFO] Segmentation: Othonna_024 -> ID 24 | found=True
-12:35:16:239 [INFO] Segmentation: Othonna_025 -> ID 25 | found=True
-12:35:16:243 [INFO] Segmentation: Othonna_026 -> ID 26 | found=True
-12:35:16:246 [INFO] Segmentation: Othonna_027 -> ID 27 | found=True
-12:35:16:249 [INFO] Segmentation: Othonna_028 -> ID 28 | found=True
-12:35:16:253 [INFO] Segmentation: Othonna_029 -> ID 29 | found=True
-12:35:16:255 [INFO] Segmentation: Othonna_030 -> ID 30 | found=True
-12:35:16:256 [INFO] Taking off
-12:35:19:195 [INFO] Climbing vertically to 30.0 m before horizontal flight
-12:35:24:929 [INFO] Reached flight altitude 30.0 m
-12:35:24:934 [INFO] Loaded 28 sweep waypoints
-12:35:24:934 [INFO] Moving to sweep start A at X=372.000, Y=-381.825
-12:35:24:935 [INFO] Positioning A: attempt 1/16 at 5.0 m/s | waypoint NED=(372.0000000, -381.8250000, -30.0000000)
-12:38:07:007 [INFO] Controller reports move complete for A; watching position for up to 3.0 s
-12:38:07:008 [INFO] Settling A | actual=(305.4953613, -313.7633667, -30.2038784) | horizontal error=95.159 m vertical error=0.204 m | good samples=0/3
-12:38:08:126 [ERROR] Exception occurred: Timed out
-Traceback (most recent call last):
-  File "C:\Users\cmdp7\OneDrive\Desktop\VISTA\src\Drone\hello_drone.py", line 924, in main
-    await move_to_waypoint_precisely(
-    ...<2 lines>...
-    )
-  File "C:\Users\cmdp7\OneDrive\Desktop\VISTA\src\Drone\hello_drone.py", line 681, in move_to_waypoint_precisely
-    pose = drone.get_ground_truth_pose()
-  File "C:\Users\cmdp7\AppData\Roaming\Python\Python313\site-packages\projectairsim\drone.py", line 939, in get_ground_truth_pose
-    pose = self.client.request(get_pose_req)
-  File "C:\Users\cmdp7\AppData\Roaming\Python\Python313\site-packages\projectairsim\client.py", line 243, in request
-    self.socket_services.send(request_packed)
-    ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^
-  File "C:\Users\cmdp7\AppData\Roaming\Python\Python313\site-packages\pynng\nng.py", line 493, in send
-    check_err(err)
-    ~~~~~~~~~^^^^^
-  File "C:\Users\cmdp7\AppData\Roaming\Python\Python313\site-packages\pynng\exceptions.py", line 202, in check_err
-    raise exc(string, err)
-pynng.exceptions.Timeout: Timed out
-12:38:08:131 [INFO] Disconnecting from simulation server...
-12:38:09:147 [WARNING] Timed out while trying to unsubscribe from all topics.
-12:38:09:147 [INFO] Disconnected.
+11:52:59:900 [INFO] Connecting to simulation server at 127.0.0.1
+11:52:59:909 [INFO] Connection opened.
+11:52:59:910 [INFO] Started the pub-sub topic receiving thread.
+11:52:59:910 [INFO] Loading scene config: scene_basic_drone.jsonc
+11:53:00:460 [INFO] Getting the list of available topic info from the sim server...
+11:53:00:471 [INFO] Successfully received topic info list.
+11:53:02:472 [INFO] World object updated for the loaded scene '/Sim/SceneBasicDrone'. Note: Any previous Drone object instances may no longer be valid.
+11:53:02:476 [INFO] Trajectory 'null_trajectory' imported successfully.
+11:53:02:477 [INFO] Initalizing Drone 'Drone1'...
+11:53:02:479 [INFO] -------------------------------------------------
+11:53:02:479 [INFO] The following topics can be subscribed to for robot 'Drone1':
+11:53:02:479 [INFO]     sensors["Chase"]["scene_camera"]
+11:53:02:480 [INFO]     sensors["Chase"]["scene_camera_info"]
+11:53:02:480 [INFO]     sensors["DownCamera"]["scene_camera"]
+11:53:02:480 [INFO]     sensors["DownCamera"]["scene_camera_info"]
+11:53:02:481 [INFO]     sensors["DownCamera"]["depth_camera"]
+11:53:02:481 [INFO]     sensors["DownCamera"]["depth_camera_info"]
+11:53:02:482 [INFO]     sensors["DownCamera"]["segmentation_camera"]
+11:53:02:482 [INFO]     sensors["DownCamera"]["segmentation_camera_info"]
+11:53:02:482 [INFO]     sensors["DownCamera"]["surface_normals_camera"]
+11:53:02:482 [INFO]     sensors["DownCamera"]["surface_normals_camera_info"]
+11:53:02:483 [INFO]     sensors["IMU1"]["imu_kinematics"]
+11:53:02:483 [INFO]     sensors["GPS"]["gps"]
+11:53:02:483 [INFO]     sensors["Barometer"]["barometer"]
+11:53:02:483 [INFO]     sensors["Magnetometer"]["magnetometer"]
+11:53:02:483 [INFO]     robot_info["actual_pose"]
+11:53:02:483 [INFO]     robot_info["collision_info"]
+11:53:02:483 [INFO]     robot_info["rotor_info"]
+11:53:02:483 [INFO] -------------------------------------------------
+11:53:02:484 [INFO] Drone 'Drone1' initialized for World scene '/Sim/SceneBasicDrone'
+11:53:02:488 [INFO] Loaded 30 plant targets
+11:53:02:488 [INFO] Resetting scene segmentation IDs to 0
+11:53:02:522 [INFO] Segmentation: Othonna_001 -> ID 1 | found=True
+11:53:02:645 [INFO] Segmentation: Othonna_002 -> ID 2 | found=True
+11:53:02:649 [INFO] Segmentation: Othonna_003 -> ID 3 | found=True
+11:53:02:655 [INFO] Segmentation: Othonna_004 -> ID 4 | found=True
+11:53:02:662 [INFO] Segmentation: Othonna_005 -> ID 5 | found=True
+11:53:02:665 [INFO] Segmentation: Othonna_006 -> ID 6 | found=True
+11:53:02:669 [INFO] Segmentation: Othonna_007 -> ID 7 | found=True
+11:53:02:672 [INFO] Segmentation: Othonna_008 -> ID 8 | found=True
+11:53:02:678 [INFO] Segmentation: Othonna_009 -> ID 9 | found=True
+11:53:02:683 [INFO] Segmentation: Othonna_010 -> ID 10 | found=True
+11:53:02:705 [INFO] Segmentation: Othonna_011 -> ID 11 | found=True
+11:53:02:711 [INFO] Segmentation: Othonna_012 -> ID 12 | found=True
+11:53:02:715 [INFO] Segmentation: Othonna_013 -> ID 13 | found=True
+11:53:02:718 [INFO] Segmentation: Othonna_014 -> ID 14 | found=True
+11:53:02:724 [INFO] Segmentation: Othonna_015 -> ID 15 | found=True
+11:53:02:727 [INFO] Segmentation: Othonna_016 -> ID 16 | found=True
+11:53:02:734 [INFO] Segmentation: Othonna_017 -> ID 17 | found=True
+11:53:02:738 [INFO] Segmentation: Othonna_018 -> ID 18 | found=True
+11:53:02:744 [INFO] Segmentation: Othonna_019 -> ID 19 | found=True
+11:53:02:749 [INFO] Segmentation: Othonna_020 -> ID 20 | found=True
+11:53:02:753 [INFO] Segmentation: Othonna_021 -> ID 21 | found=True
+11:53:02:757 [INFO] Segmentation: Othonna_022 -> ID 22 | found=True
+11:53:02:760 [INFO] Segmentation: Othonna_023 -> ID 23 | found=True
+11:53:02:764 [INFO] Segmentation: Othonna_024 -> ID 24 | found=True
+11:53:02:769 [INFO] Segmentation: Othonna_025 -> ID 25 | found=True
+11:53:02:773 [INFO] Segmentation: Othonna_026 -> ID 26 | found=True
+11:53:02:778 [INFO] Segmentation: Othonna_027 -> ID 27 | found=True
+11:53:02:783 [INFO] Segmentation: Othonna_028 -> ID 28 | found=True
+11:53:02:787 [INFO] Segmentation: Othonna_029 -> ID 29 | found=True
+11:53:02:791 [INFO] Segmentation: Othonna_030 -> ID 30 | found=True
+11:53:02:791 [INFO] Manual keyboard-control mode enabled
+11:53:03:502 [INFO] Manual control: takeoff
+11:53:04:834 [INFO] Manual control: takeoff
+11:53:04:837 [INFO] Manual control: takeoff
+11:53:09:914 [INFO] Manual control: takeoff
+11:53:16:560 [INFO] Manual control: takeoff

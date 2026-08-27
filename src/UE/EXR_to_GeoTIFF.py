@@ -21,7 +21,7 @@ from rasterio.transform import from_origin
 
 
 # ============================================================
-# PROPERTIES: CHANGE AS NECESSARY
+# PROPERTIES
 # ============================================================
 
 SCRIPT_DIR = Path(__file__).resolve().parent

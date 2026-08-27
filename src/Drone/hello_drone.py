@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import csv
 import msvcrt  # Windows CMD keyboard input
+import ctypes   # Windows held-key state for smooth manual control
 from pathlib import Path
 
 import numpy as np
@@ -40,16 +41,33 @@ MIN_VISIBLE_PIXELS_FOR_OBSERVATION = 1
 
 MANUAL_HORIZONTAL_SPEED_MPS = 3.0
 MANUAL_VERTICAL_SPEED_MPS = 2.0
-MANUAL_COMMAND_DURATION_SEC = 0.20
-MANUAL_STOP_DURATION_SEC = 0.05
+MANUAL_COMMAND_DURATION_SEC = 0.10
+MANUAL_CONTROL_LOOP_SEC = 0.01
 
 
 # Simple waypoint handling.
 # Each move has a finite controller timeout, then we do one brief ground-truth
 # check before continuing to the next waypoint.
-POSITION_TOLERANCE_M = 2.0
-WAYPOINT_MOVE_TIMEOUT_SEC = 120.0
+POSITION_TOLERANCE_M = 5.0
 WAYPOINT_SETTLE_SEC = 0.25
+
+
+# Timeout now scales with the distance to the waypoint instead of using one
+# short fixed value for every leg.
+WAYPOINT_TIMEOUT_SAFETY_FACTOR = 1.5
+WAYPOINT_TIMEOUT_BUFFER_SEC = 10.0
+MIN_WAYPOINT_TIMEOUT_SEC = 15.0
+
+# Log an error if the drone is still away from its waypoint but its measured
+# ground-truth speed stays near zero for this long.
+MOTION_CHECK_INTERVAL_SEC = 0.5
+STALL_SPEED_THRESHOLD_MPS = 0.25
+STALL_DURATION_SEC = 2.0
+STALL_STARTUP_GRACE_SEC = 2.0
+
+
+MAX_WAYPOINT_ATTEMPTS = 2
+
 
 # ---------------------------------------------------------------------------
 # Display segmentation window
@@ -259,6 +277,18 @@ def configure_plant_segmentation(world, targets):
             target["segmentation_id"],
             False,  # exact name, not regex
             True,   # match the owning Unreal actor's name
+        )
+
+        actual_id = world.get_segmentation_id_by_name(
+            target["id"],
+            True,
+        )       
+
+        print(
+            target["id"],
+            "expected =", target["segmentation_id"],
+            "actual =", actual_id,
+            "colour =", SEGMENTATION_PALLETE[target["segmentation_id"]],
         )
 
         projectairsim_log().info(
@@ -511,7 +541,7 @@ async def display_telemetry(drone, targets, observation_status):
 
 async def manual_keyboard_control(drone):
     """
-    Control the drone from the Windows CMD/terminal window.
+    Control the drone from the Windows keyboard.
 
     Project AirSim uses NED coordinates:
       W/S -> north/south
@@ -521,8 +551,9 @@ async def manual_keyboard_control(drone):
       X   -> land
       Q   -> leave manual mode
 
-    The movement keys send short velocity pulses. Holding a key also works
-    through Windows key-repeat, while releasing it lets the drone settle.
+    Movement keys are polled from their actual held state with
+    GetAsyncKeyState(), rather than relying on Windows terminal key-repeat.
+    This avoids the old move/stop/move/stop pulsing behaviour.
     """
 
     print(
@@ -538,75 +569,91 @@ async def manual_keyboard_control(drone):
         "Keep this CMD window focused while flying.\n"
     )
 
-    velocity_by_key = {
-        "w": (MANUAL_HORIZONTAL_SPEED_MPS, 0.0, 0.0),
-        "s": (-MANUAL_HORIZONTAL_SPEED_MPS, 0.0, 0.0),
-        "a": (0.0, -MANUAL_HORIZONTAL_SPEED_MPS, 0.0),
-        "d": (0.0, MANUAL_HORIZONTAL_SPEED_MPS, 0.0),
-        # NED uses positive Down, so Up is a negative down-velocity.
-        "r": (0.0, 0.0, -MANUAL_VERTICAL_SPEED_MPS),
-        "f": (0.0, 0.0, MANUAL_VERTICAL_SPEED_MPS),
+    # Virtual-key codes for the movement keys. GetAsyncKeyState() returns a
+    # value with the high bit set while that key is physically held down.
+    movement_vk = {
+        "w": ord("W"),
+        "s": ord("S"),
+        "a": ord("A"),
+        "d": ord("D"),
+        "r": ord("R"),
+        "f": ord("F"),
     }
 
+    def key_is_down(key):
+        return bool(ctypes.windll.user32.GetAsyncKeyState(movement_vk[key]) & 0x8000)
+
+    was_moving = False
+
     while True:
-        # msvcrt.kbhit() is non-blocking, so the asyncio camera viewer can keep
-        # refreshing while we wait for a key.
-        if not msvcrt.kbhit():
-            await asyncio.sleep(0.02)
-            continue
+        # Handle one-shot commands through the terminal as before. Drain all
+        # queued keypresses so movement-key repeats do not build up in msvcrt.
+        while msvcrt.kbhit():
+            key = msvcrt.getwch().lower()
 
-        key = msvcrt.getwch().lower()
+            if key in ("\x00", "\xe0"):
+                if msvcrt.kbhit():
+                    msvcrt.getwch()
+                continue
 
-        # Ignore the prefix bytes used by Windows for special keys such as
-        # arrows/F-keys. We deliberately use ordinary letter keys here.
-        if key in ("\x00", "\xe0"):
-            if msvcrt.kbhit():
-                msvcrt.getwch()
-            continue
+            if key == "q":
+                projectairsim_log().info(
+                    "Leaving manual control - landing first"
+                )
+                land_task = await drone.land_async()
+                await land_task
+                return
 
-        if key == "q":
-            projectairsim_log().info(
-                "Leaving manual control - landing first"
+            if key == "t":
+                projectairsim_log().info("Manual control: takeoff")
+                takeoff_task = await drone.takeoff_async()
+                await takeoff_task
+                continue
+
+            if key == "x":
+                projectairsim_log().info("Manual control: landing")
+                land_task = await drone.land_async()
+                await land_task
+                continue
+
+        # Read the current physical key state. Opposite keys cancel each other,
+        # and diagonal movement is allowed naturally.
+        north_input = int(key_is_down("w")) - int(key_is_down("s"))
+        east_input = int(key_is_down("d")) - int(key_is_down("a"))
+        down_input = int(key_is_down("f")) - int(key_is_down("r"))
+
+        v_north = north_input * MANUAL_HORIZONTAL_SPEED_MPS
+        v_east = east_input * MANUAL_HORIZONTAL_SPEED_MPS
+        v_down = down_input * MANUAL_VERTICAL_SPEED_MPS
+
+        moving = any((north_input, east_input, down_input))
+
+        if moving:
+            # Send consecutive short velocity commands while a key is held.
+            # Crucially, there is NO zero-velocity command between them.
+            move_task = await drone.move_by_velocity_async(
+                v_north=v_north,
+                v_east=v_east,
+                v_down=v_down,
+                duration=MANUAL_COMMAND_DURATION_SEC,
             )
-            land_task = await drone.land_async()
-            await land_task
-            break
-
-        if key == "t":
-            projectairsim_log().info("Manual control: takeoff")
-            takeoff_task = await drone.takeoff_async()
-            await takeoff_task
+            await move_task
+            was_moving = True
             continue
 
-        if key == "x":
-            projectairsim_log().info("Manual control: landing")
-            land_task = await drone.land_async()
-            await land_task
-            continue
+        if was_moving:
+            # A zero command is sent only once, when all movement keys have
+            # actually been released.
+            stop_task = await drone.move_by_velocity_async(
+                v_north=0.0,
+                v_east=0.0,
+                v_down=0.0,
+                duration=MANUAL_COMMAND_DURATION_SEC,
+            )
+            await stop_task
+            was_moving = False
 
-        velocity = velocity_by_key.get(key)
-        if velocity is None:
-            continue
-
-        v_north, v_east, v_down = velocity
-
-        move_task = await drone.move_by_velocity_async(
-            v_north=v_north,
-            v_east=v_east,
-            v_down=v_down,
-            duration=MANUAL_COMMAND_DURATION_SEC,
-        )
-        await move_task
-
-        # Explicitly command zero velocity after the pulse so a single tap does
-        # not leave the previous velocity setpoint active.
-        stop_task = await drone.move_by_velocity_async(
-            v_north=0.0,
-            v_east=0.0,
-            v_down=0.0,
-            duration=MANUAL_STOP_DURATION_SEC,
-        )
-        await stop_task
+        await asyncio.sleep(MANUAL_CONTROL_LOOP_SEC)
 
 
 # ---------------------------------------------------------------------------
@@ -614,77 +661,281 @@ async def manual_keyboard_control(drone):
 # ---------------------------------------------------------------------------
 
 
-async def move_to_waypoint_precisely(drone, waypoint):
-    """
-    Fly once to a waypoint, briefly check the resulting ground-truth position,
-    then continue.
 
-    There is deliberately no correction loop here: sweep waypoints define the
-    route, not precision hover targets.
-    """
-    projectairsim_log().info(
-        "Moving to %s at %.1f m/s | waypoint NED=(%.3f, %.3f, %.3f)",
-        waypoint["id"],
-        FLIGHT_VELOCITY_MPS,
-        waypoint["x"],
-        waypoint["y"],
-        waypoint["z"],
-    )
-
-    move_task = await drone.move_to_position_async(
-        north=waypoint["x"],
-        east=waypoint["y"],
-        down=waypoint["z"],
-        velocity=FLIGHT_VELOCITY_MPS,
-        timeout_sec=WAYPOINT_MOVE_TIMEOUT_SEC,
-    )
-    await move_task
-
-    # Give the vehicle a moment to settle before sampling its actual position.
-    await asyncio.sleep(WAYPOINT_SETTLE_SEC)
+async def monitor_waypoint_motion(drone, waypoint):
+    """Return True if the drone effectively stops before reaching a waypoint."""
+    loop = asyncio.get_running_loop()
 
     pose = drone.get_ground_truth_pose()
     position = pose["translation"]
+    previous_x = float(position["x"])
+    previous_y = float(position["y"])
+    previous_z = float(position["z"])
+    previous_time = loop.time()
+    monitor_started = previous_time
 
-    current_x = float(position["x"])
-    current_y = float(position["y"])
-    current_z = float(position["z"])
+    stall_started = None
 
-    dx = waypoint["x"] - current_x
-    dy = waypoint["y"] - current_y
-    dz = waypoint["z"] - current_z
+    while True:
+        await asyncio.sleep(MOTION_CHECK_INTERVAL_SEC)
 
-    horizontal_error = (dx**2 + dy**2) ** 0.5
-    vertical_error = abs(dz)
+        pose = drone.get_ground_truth_pose()
+        position = pose["translation"]
+        current_x = float(position["x"])
+        current_y = float(position["y"])
+        current_z = float(position["z"])
+        current_time = loop.time()
 
-    if (
-        horizontal_error > POSITION_TOLERANCE_M
-        or vertical_error > POSITION_TOLERANCE_M
-    ):
-        projectairsim_log().warning(
-            "%s reached with larger-than-expected error | "
-            "actual=(%.3f, %.3f, %.3f) | "
-            "horizontal error=%.2f m vertical error=%.2f m | continuing",
-            waypoint["id"],
-            current_x,
-            current_y,
-            current_z,
-            horizontal_error,
-            vertical_error,
+        dt = max(current_time - previous_time, 1e-6)
+        travelled = (
+            (current_x - previous_x) ** 2
+            + (current_y - previous_y) ** 2
+            + (current_z - previous_z) ** 2
+        ) ** 0.5
+        measured_speed = travelled / dt
+
+        dx = waypoint["x"] - current_x
+        dy = waypoint["y"] - current_y
+        dz = waypoint["z"] - current_z
+        horizontal_error = (dx**2 + dy**2) ** 0.5
+        vertical_error = abs(dz)
+
+        at_waypoint = (
+            horizontal_error <= POSITION_TOLERANCE_M
+            and vertical_error <= POSITION_TOLERANCE_M
         )
-    else:
+        past_startup_grace = (
+            current_time - monitor_started >= STALL_STARTUP_GRACE_SEC
+        )
+
+        if (
+            past_startup_grace
+            and not at_waypoint
+            and measured_speed < STALL_SPEED_THRESHOLD_MPS
+        ):
+            if stall_started is None:
+                stall_started = current_time
+            elif current_time - stall_started >= STALL_DURATION_SEC:
+                projectairsim_log().error(
+                    "DRONE STALL detected while moving to %s | "
+                    "measured speed=%.2f m/s | actual=(%.3f, %.3f, %.3f) | "
+                    "horizontal error=%.2f m vertical error=%.2f m",
+                    waypoint["id"],
+                    measured_speed,
+                    current_x,
+                    current_y,
+                    current_z,
+                    horizontal_error,
+                    vertical_error,
+                )
+
+                #report the stall to the waypoint mover immediately
+                # so it can cancel this controller command and retry the SAME
+                # waypoint instead of waiting for the long movement timeout.
+                return True
+      
+        else:
+            stall_started = None
+
+        previous_x = current_x
+        previous_y = current_y
+        previous_z = current_z
+        previous_time = current_time
+
+
+
+async def move_to_waypoint_precisely(drone, waypoint):
+    """
+    Fly to a waypoint and verify the resulting ground-truth position.
+
+    If the drone stalls, or the movement command ends outside the waypoint
+    tolerance, retry the SAME waypoint once. A second failure aborts the mission.
+    """
+
+   
+    last_failure = None
+
+    for attempt in range(1, MAX_WAYPOINT_ATTEMPTS + 1):
+        # Recalculate distance on every attempt because a retry starts from the
+        # drone's new/current position.
+        start_pose = drone.get_ground_truth_pose()
+        start_position = start_pose["translation"]
+        start_x = float(start_position["x"])
+        start_y = float(start_position["y"])
+        start_z = float(start_position["z"])
+
+        start_dx = waypoint["x"] - start_x
+        start_dy = waypoint["y"] - start_y
+        start_dz = waypoint["z"] - start_z
+        distance = (start_dx**2 + start_dy**2 + start_dz**2) ** 0.5
+
+        expected_time = distance / FLIGHT_VELOCITY_MPS
+        timeout_sec = max(
+            MIN_WAYPOINT_TIMEOUT_SEC,
+            expected_time * WAYPOINT_TIMEOUT_SAFETY_FACTOR
+            + WAYPOINT_TIMEOUT_BUFFER_SEC,
+        )
+
+        if attempt > 1:
+            projectairsim_log().warning(
+                "Retrying SAME waypoint %s | attempt %d/%d",
+                waypoint["id"],
+                attempt,
+                MAX_WAYPOINT_ATTEMPTS,
+            )
+
         projectairsim_log().info(
-            "Reached %s | actual=(%.3f, %.3f, %.3f) | "
-            "horizontal error=%.2f m vertical error=%.2f m",
+            "Moving to %s at %.1f m/s | waypoint NED=(%.3f, %.3f, %.3f) | "
+            "distance=%.1f m expected=%.1f s timeout=%.1f s | attempt=%d/%d",
+            waypoint["id"],
+            FLIGHT_VELOCITY_MPS,
+            waypoint["x"],
+            waypoint["y"],
+            waypoint["z"],
+            distance,
+            expected_time,
+            timeout_sec,
+            attempt,
+            MAX_WAYPOINT_ATTEMPTS,
+        )
+
+        controller_task = await drone.move_to_position_async(
+            north=waypoint["x"],
+            east=waypoint["y"],
+            down=waypoint["z"],
+            velocity=FLIGHT_VELOCITY_MPS,
+            timeout_sec=timeout_sec,
+        )
+
+        # ensure_future accepts either the asyncio Task returned by Project
+        # AirSim or another awaitable representing the controller request.
+        move_task = asyncio.ensure_future(controller_task)
+        motion_monitor = asyncio.create_task(
+            monitor_waypoint_motion(drone, waypoint)
+        )
+
+        stall_detected = False
+
+        try:
+            done, _ = await asyncio.wait(
+                {move_task, motion_monitor},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            if motion_monitor in done:
+                stall_detected = bool(motion_monitor.result())
+
+            if stall_detected:
+                # Stop the stuck Project AirSim controller command before
+                # issuing the retry.
+                cancelled = drone.cancel_last_task()
+                projectairsim_log().error(
+                    "Cancelled stalled movement to %s | "
+                    "cancel_last_task returned %s",
+                    waypoint["id"],
+                    cancelled,
+                )
+
+                if not move_task.done():
+                    move_task.cancel()
+                    try:
+                        await move_task
+                    except asyncio.CancelledError:
+                        pass
+
+                last_failure = RuntimeError(
+                    f"Drone stalled while moving to waypoint {waypoint['id']}"
+                )
+
+            else:
+                # The movement command finished first. Propagate any controller
+                # exception before checking the final ground-truth position.
+                await move_task
+
+        finally:
+            if not motion_monitor.done():
+                motion_monitor.cancel()
+                try:
+                    await motion_monitor
+                except asyncio.CancelledError:
+                    pass
+
+        if stall_detected:
+            if attempt < MAX_WAYPOINT_ATTEMPTS:
+                await asyncio.sleep(WAYPOINT_SETTLE_SEC)
+                continue
+
+            projectairsim_log().error(
+                "Waypoint %s stalled again on retry - aborting mission",
+                waypoint["id"],
+            )
+            raise last_failure
+
+        # Give the vehicle a moment to settle before sampling its actual position.
+        await asyncio.sleep(WAYPOINT_SETTLE_SEC)
+
+        pose = drone.get_ground_truth_pose()
+        position = pose["translation"]
+
+        current_x = float(position["x"])
+        current_y = float(position["y"])
+        current_z = float(position["z"])
+
+        dx = waypoint["x"] - current_x
+        dy = waypoint["y"] - current_y
+        dz = waypoint["z"] - current_z
+
+        horizontal_error = (dx**2 + dy**2) ** 0.5
+        vertical_error = abs(dz)
+
+        if (
+            horizontal_error <= POSITION_TOLERANCE_M
+            and vertical_error <= POSITION_TOLERANCE_M
+        ):
+            projectairsim_log().info(
+                "Reached %s | actual=(%.3f, %.3f, %.3f) | "
+                "horizontal error=%.2f m vertical error=%.2f m",
+                waypoint["id"],
+                current_x,
+                current_y,
+                current_z,
+                horizontal_error,
+                vertical_error,
+            )
+            return current_x, current_y, current_z
+
+        projectairsim_log().error(
+            "%s movement ended before waypoint was reached | "
+            "actual=(%.3f, %.3f, %.3f) | "
+            "horizontal error=%.2f m vertical error=%.2f m | attempt=%d/%d",
             waypoint["id"],
             current_x,
             current_y,
             current_z,
             horizontal_error,
             vertical_error,
+            attempt,
+            MAX_WAYPOINT_ATTEMPTS,
         )
 
-    return current_x, current_y, current_z
+        last_failure = RuntimeError(
+            f"Failed to reach waypoint {waypoint['id']}: "
+            f"horizontal error={horizontal_error:.2f} m, "
+            f"vertical error={vertical_error:.2f} m"
+        )
+
+        if attempt < MAX_WAYPOINT_ATTEMPTS:
+            continue
+
+        projectairsim_log().error(
+            "Waypoint %s failed again on retry - aborting mission",
+            waypoint["id"],
+        )
+        raise last_failure
+
+    # Defensive fallback; the loop above always returns or raises.
+    raise last_failure
+
 
 
 async def climb_to_flight_altitude(drone):
@@ -705,13 +956,23 @@ async def climb_to_flight_altitude(drone):
         FLIGHT_ALTITUDE_M,
     )
 
+    current_z = float(position["z"])
+    climb_distance = abs((-FLIGHT_ALTITUDE_M) - current_z)
+    climb_expected_time = climb_distance / FLIGHT_VELOCITY_MPS
+    climb_timeout_sec = max(
+        MIN_WAYPOINT_TIMEOUT_SEC,
+        climb_expected_time * WAYPOINT_TIMEOUT_SAFETY_FACTOR
+        + WAYPOINT_TIMEOUT_BUFFER_SEC,
+    )
+
     climb_task = await drone.move_to_position_async(
         north=current_x,
         east=current_y,
         down=-FLIGHT_ALTITUDE_M,
         velocity=FLIGHT_VELOCITY_MPS,
-        timeout_sec=WAYPOINT_MOVE_TIMEOUT_SEC,
+        timeout_sec=climb_timeout_sec,
     )
+
     await climb_task
 
     projectairsim_log().info(
@@ -793,12 +1054,30 @@ async def main(manual=False):
                 camera_debug_viewer(drone, segmentation_stop)
             )
 
+            # Run the same per-Othonna pixel telemetry used by the autonomous
+            # survey while the drone is being flown manually.
+            telemetry_task = asyncio.create_task(
+                display_telemetry(
+                    drone,
+                    targets,
+                    observation_status,
+                )
+            )
+
             try:
                 await manual_keyboard_control(drone)
             finally:
+                telemetry_task.cancel()
+                try:
+                    await telemetry_task
+                except asyncio.CancelledError:
+                    pass
+
                 segmentation_stop.set()
                 await segmentation_task
 
+                print()
+                print_observation_summary(observation_status)
 
                 # Safety fallback: if manual mode exits because of an exception,
                 # attempt to land before disarming rather than dropping the drone.
