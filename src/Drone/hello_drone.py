@@ -18,6 +18,7 @@ import cv2
 # ---------------------------------------------------------------------------
 OTHONNA_CSV = Path(__file__).resolve().parent / "flightpath.csv"
 SWEEP_PATH_CSV = Path(__file__).resolve().parent / "sweep_path.csv"
+SURVEY_RESULTS_CSV = Path(__file__).resolve().parent / "survey_results.csv"
 
 # Unreal reads this file and displays it using the DroneTelemetryHUD actor.
 UNREAL_PROJECT_DIR = Path(
@@ -30,12 +31,18 @@ DRONE_NAME = "Drone1"
 SEGMENTATION_CAMERA = "DownCamera"
 
 FLIGHT_ALTITUDE_M = 30.0
-FLIGHT_VELOCITY_MPS = 5
+FLIGHT_VELOCITY_MPS = 20
 TELEMETRY_INTERVAL_SEC = 0.25
 
 
 # A plant counts as observed as soon 1 of its segmentation pixels are in frame.
 MIN_VISIBLE_PIXELS_FOR_OBSERVATION = 1
+
+
+# An Othonna can only count as observed while the drone is within this absolute
+# X/Y (planar Euclidean) distance of it. flightpath.csv currently provides only
+# target X/Y coordinates, so no target Z value is invented here.
+MAX_OBSERVATION_DISTANCE_M = 50.0
 
 
 
@@ -374,12 +381,23 @@ def get_all_target_pixel_counts(drone, targets):
     return measurements
 
 
-def update_observation_status(observation_status, measurements):
+def update_observation_status(
+    observation_status,
+    measurements,
+    targets_by_id,
+    drone_x,
+    drone_y,
+):
     """
     Update the persistent survey record from one camera frame.
 
     Once an Othonna becomes observed it remains observed for the rest of the
     survey. We also retain its best pixel/fraction measurements.
+
+    A camera observation is only successful when BOTH conditions are true:
+      1. the normal visibility/pixel criterion passes; and
+      2. the drone is within MAX_OBSERVATION_DISTANCE_M of the target.
+
     """
     for plant_id, measurement in measurements.items():
         status = observation_status[plant_id]
@@ -388,12 +406,34 @@ def update_observation_status(observation_status, measurements):
         xray_pixels = measurement["xray_pixels"]
         visible_fraction = measurement["visible_fraction"]
 
-        if visible_pixels >= MIN_VISIBLE_PIXELS_FOR_OBSERVATION:
+
+        target = targets_by_id[plant_id]
+        dx = target["x"] - drone_x
+        dy = target["y"] - drone_y
+        distance_to_target_m = (dx**2 + dy**2) ** 0.5
+        within_distance_gate = (
+            distance_to_target_m <= MAX_OBSERVATION_DISTANCE_M
+        )
+
+        # Keep the current visibility rule, but make distance a mandatory AND.
+        observation_successful = (
+            within_distance_gate
+            and visible_pixels >= MIN_VISIBLE_PIXELS_FOR_OBSERVATION
+        )
+
+        # Attach these frame-local values for telemetry/debugging below.
+        measurement["distance_to_target_m"] = distance_to_target_m
+        measurement["within_distance_gate"] = within_distance_gate
+
+        if observation_successful:  #now hard-gated by distance.
             if not status["is_observed"]:
                 projectairsim_log().info(
-                    "OBSERVED %s for the first time (%d visible pixels)",
+                    "OBSERVED %s for the first time "
+                    "(%d visible pixels, distance=%.2f m <= %.2f m)",
                     plant_id,
                     visible_pixels,
+                    distance_to_target_m,
+                    MAX_OBSERVATION_DISTANCE_M,
                 )
 
             status["is_observed"] = True
@@ -412,13 +452,81 @@ def update_observation_status(observation_status, measurements):
         )
 
 
-def print_observation_summary(observation_status):
-    """Print the final observed/not-observed state for every Othonna."""
+
+def export_survey_results(targets, observation_status):
+    """
+    Write one summary row per Othonna to survey_results.csv.
+
+    Every target from flightpath.csv is included, even if it was never
+    detected by either the normal segmentation camera or the X-ray camera.
+    """
+    fieldnames = [
+        "id",
+        "x_m",
+        "y_m",
+        "observed",
+        "xray_detected",
+        "max_visible_pixels",
+        "max_xray_pixels",
+        "max_visible_fraction",
+    ]
+
+    with SURVEY_RESULTS_CSV.open(
+        "w",
+        newline="",
+        encoding="utf-8",
+    ) as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for target in targets:
+            status = observation_status[target["id"]]
+
+            writer.writerow({
+                "id": target["id"],
+                "x_m": target["x"],
+                "y_m": target["y"],
+                "observed": status["is_observed"],
+                "xray_detected": status["max_xray_pixels"] > 0,
+                "max_visible_pixels": status["max_visible_pixels"],
+                "max_xray_pixels": status["max_xray_pixels"],
+                "max_visible_fraction": f"{status['max_visible_fraction']:.6f}",
+            })
+
+    projectairsim_log().info(
+        "Exported per-Othonna survey results to %s",
+        SURVEY_RESULTS_CSV,
+    )
+
+
+def calculate_survey_metrics(observation_status, survey_time_sec):
+    """Return recall, survey time, and recall-per-second efficiency."""
+
     observed_count = sum(
         status["is_observed"]
         for status in observation_status.values()
     )
     total_count = len(observation_status)
+
+    recall = (observed_count / total_count) if total_count > 0 else 0.0
+    efficiency = (recall / survey_time_sec) if survey_time_sec > 0 else 0.0
+
+    return observed_count, total_count, recall, survey_time_sec, efficiency
+
+
+
+def print_observation_summary(observation_status, survey_time_sec):  # CHANGED
+    """Print per-Othonna status plus the final survey-level metrics."""
+    (
+        observed_count,
+        total_count,
+        recall,
+        survey_time_sec,
+        efficiency,
+    ) = calculate_survey_metrics(
+        observation_status,
+        survey_time_sec,
+    )
 
     print("\n=== OTHONNA OBSERVATION SUMMARY ===")
 
@@ -432,15 +540,26 @@ def print_observation_summary(observation_status):
             f"max visible fraction={status['max_visible_fraction']:.3f}"
         )
 
-    if total_count > 0:
-        recall = observed_count / total_count
-    else:
-        recall = 0.0
-
     print(
         f"Observed {observed_count}/{total_count} Othonnas "
         f"({recall:.1%} recall)"
     )
+
+
+    print("\n=== SURVEY METRICS ===")
+    print(f"Total recall: {recall:.6f} ({recall:.2%})")
+    print(f"Total survey time: {survey_time_sec:.3f} s")
+    print(f"Efficiency (recall / survey time): {efficiency:.9f} recall/s")
+
+    projectairsim_log().info(
+        "SURVEY METRICS | recall=%.6f | survey_time=%.3f s | "
+        "efficiency=%.9f recall/s",
+        recall,
+        survey_time_sec,
+        efficiency,
+    )
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -452,6 +571,10 @@ async def display_telemetry(drone, targets, observation_status):
     """
     Continuously inspect the current camera frame during the sweep.
     """
+
+    targets_by_id = {target["id"]: target for target in targets} #lookup Othonna data for given ID.
+
+
     while True:
         pose = drone.get_ground_truth_pose()
         position = pose["translation"]
@@ -468,6 +591,9 @@ async def display_telemetry(drone, targets, observation_status):
         update_observation_status(
             observation_status,
             measurements,
+            targets_by_id, 
+            x,             
+            y,  
         )
 
         observed_count = sum(
@@ -490,12 +616,21 @@ async def display_telemetry(drone, targets, observation_status):
             visible_fraction = measurement["visible_fraction"]
             occluded_fraction = 1.0 - visible_fraction
 
+
+            distance_to_target_m = measurement["distance_to_target_m"]
+            distance_gate_text = (
+                "PASS" if measurement["within_distance_gate"] else "FAIL"
+            )
+
+
             othonna_lines.append(
                 f"{plant_id}: "
                 f"visible pixels={visible_pixels} | "
                 f"X-ray pixels={xray_pixels} | "
                 f"visible fraction={visible_fraction:.3f} | "
-                f"occluded fraction={occluded_fraction:.3f}"
+                f"occluded fraction={occluded_fraction:.3f} | "
+                f"distance={distance_to_target_m:.2f} m | " 
+                f"distance gate={distance_gate_text}"              
             )
 
         if not othonna_lines:
@@ -1056,6 +1191,10 @@ async def main(manual=False):
 
             # Run the same per-Othonna pixel telemetry used by the autonomous
             # survey while the drone is being flown manually.
+
+            manual_survey_start_time = asyncio.get_running_loop().time()
+
+
             telemetry_task = asyncio.create_task(
                 display_telemetry(
                     drone,
@@ -1076,8 +1215,18 @@ async def main(manual=False):
                 segmentation_stop.set()
                 await segmentation_task
 
+                #finish timing before landing/cleanup ===
+                manual_survey_time_sec = max(
+                    0.0,
+                    asyncio.get_running_loop().time() - manual_survey_start_time,
+                )
+
+
                 print()
-                print_observation_summary(observation_status)
+                print_observation_summary(
+                    observation_status,
+                    manual_survey_time_sec,  # CHANGED
+                )
 
                 # Safety fallback: if manual mode exits because of an exception,
                 # attempt to land before disarming rather than dropping the drone.
@@ -1138,6 +1287,12 @@ async def main(manual=False):
             first_waypoint["id"],
         )
 
+
+        # Start survey only after the first sweep waypoint is reached. Therefore
+        # takeoff and transit to the survey start are excluded.
+        survey_start_time = asyncio.get_running_loop().time()
+
+
         segmentation_stop = asyncio.Event()
         segmentation_task = asyncio.create_task(
             camera_debug_viewer(drone, segmentation_stop)
@@ -1172,6 +1327,12 @@ async def main(manual=False):
                 )
 
         finally:
+            # Capture the end immediately when the sweep finishes/aborts, before
+            # camera shutdown and landing so cleanup cannot inflate survey time.
+            survey_end_time = asyncio.get_running_loop().time()
+            survey_time_sec = max(0.0, survey_end_time - survey_start_time)
+
+
             # stop observation and camera display as soon as the
             # survey path ends. Landing is outside the survey.
             telemetry_task.cancel()
@@ -1184,8 +1345,20 @@ async def main(manual=False):
             await segmentation_task
 
             projectairsim_log().info("Survey cameras stopped")
-   
+
             print()
+            print_observation_summary(
+                observation_status,
+                survey_time_sec,
+            )
+
+            # CHANGED: this exporter existed already but was never called in the
+            # autonomous survey path. Export it now, at the actual survey end.
+            export_survey_results(
+                targets,
+                observation_status,
+            )
+
 
         # The survey is one continuous flight, so land only after the final
         # sweep waypoint has been reached.
@@ -1197,7 +1370,6 @@ async def main(manual=False):
         projectairsim_log().info("Survey sweep complete")
 
 
-        print_observation_summary(observation_status)
         drone.disarm()
         drone.disable_api_control()
 
