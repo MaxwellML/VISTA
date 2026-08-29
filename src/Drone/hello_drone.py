@@ -8,9 +8,14 @@ from pathlib import Path
 import numpy as np
 
 from projectairsim import ProjectAirSimClient, Drone, World
+from projectairsim.drone import YawControlMode  # ADDED: continuous orientation correction
 from projectairsim.image_utils import SEGMENTATION_PALLETE
 from projectairsim.types import ImageType
-from projectairsim.utils import projectairsim_log, unpack_image
+from projectairsim.utils import (
+    projectairsim_log,
+    quaternion_to_rpy,  # ADDED: read actual drone yaw every control cycle
+    unpack_image,
+)
 
 import cv2
 # ---------------------------------------------------------------------------
@@ -31,13 +36,28 @@ DRONE_NAME = "Drone1"
 SEGMENTATION_CAMERA = "DownCamera"
 
 FLIGHT_ALTITUDE_M = 30.0
-FLIGHT_VELOCITY_MPS = 20
+FLIGHT_VELOCITY_MPS = 7
 TELEMETRY_INTERVAL_SEC = 0.25
 
+# ADDED: CONTINUOUS ORIENTATION CORRECTION
+# Keep the drone at one absolute yaw throughout the autonomous survey.
+# Project AirSim yaw is in radians in NED/world coordinates: 0 rad = North.
+# The autonomous waypoint controller below now re-reads the ACTUAL yaw and
+# reissues this absolute yaw target on every short control pulse.
+SURVEY_YAW_DEG = 0.0
+SURVEY_YAW_RAD = float(np.deg2rad(SURVEY_YAW_DEG))
+YAW_CORRECTION_MARGIN_DEG = 1.0
+YAW_CORRECTION_TIMEOUT_SEC = 10.0
 
-# A plant counts as observed as soon 1 of its segmentation pixels are in frame.
-MIN_VISIBLE_PIXELS_FOR_OBSERVATION = 1
+# ADDED: CONTINUOUS ORIENTATION CORRECTION
+# Recompute position + orientation control at 10 Hz instead of issuing one long
+# waypoint command and relying on its initial yaw request for the entire leg.
+AUTONOMOUS_CONTROL_INTERVAL_SEC = 0.10
+YAW_WARNING_LOG_INTERVAL_SEC = 1.0
 
+
+
+MIN_VISIBLE_FRACTION_FOR_OBSERVATION = 0.90
 
 # An Othonna can only count as observed while the drone is within this absolute
 # X/Y (planar Euclidean) distance of it. flightpath.csv currently provides only
@@ -395,7 +415,7 @@ def update_observation_status(
     survey. We also retain its best pixel/fraction measurements.
 
     A camera observation is only successful when BOTH conditions are true:
-      1. the normal visibility/pixel criterion passes; and
+      1. the visible fraction meets MIN_VISIBLE_FRACTION_FOR_OBSERVATION; and
       2. the drone is within MAX_OBSERVATION_DISTANCE_M of the target.
 
     """
@@ -415,11 +435,19 @@ def update_observation_status(
             distance_to_target_m <= MAX_OBSERVATION_DISTANCE_M
         )
 
-        # Keep the current visibility rule, but make distance a mandatory AND.
+
+        visibility_gate_passed = (
+            xray_pixels > 0
+            and visible_fraction >= MIN_VISIBLE_FRACTION_FOR_OBSERVATION
+        )
+
         observation_successful = (
             within_distance_gate
-            and visible_pixels >= MIN_VISIBLE_PIXELS_FOR_OBSERVATION
+            and visibility_gate_passed
         )
+
+ 
+        measurement["visibility_gate_passed"] = visibility_gate_passed
 
         # Attach these frame-local values for telemetry/debugging below.
         measurement["distance_to_target_m"] = distance_to_target_m
@@ -429,9 +457,13 @@ def update_observation_status(
             if not status["is_observed"]:
                 projectairsim_log().info(
                     "OBSERVED %s for the first time "
-                    "(%d visible pixels, distance=%.2f m <= %.2f m)",
+                    "(visible fraction=%.3f >= %.3f, %d/%d pixels, "
+                    "distance=%.2f m <= %.2f m)",
                     plant_id,
+                    visible_fraction,
+                    MIN_VISIBLE_FRACTION_FOR_OBSERVATION,
                     visible_pixels,
+                    xray_pixels,
                     distance_to_target_m,
                     MAX_OBSERVATION_DISTANCE_M,
                 )
@@ -515,7 +547,7 @@ def calculate_survey_metrics(observation_status, survey_time_sec):
 
 
 
-def print_observation_summary(observation_status, survey_time_sec):  # CHANGED
+def print_observation_summary(observation_status, survey_time_sec):
     """Print per-Othonna status plus the final survey-level metrics."""
     (
         observed_count,
@@ -562,6 +594,25 @@ def print_observation_summary(observation_status, survey_time_sec):  # CHANGED
 
 
 
+# ADDED: CONTINUOUS ORIENTATION CORRECTION
+def wrap_angle_rad(angle):
+    """Wrap an angle to [-pi, pi] so yaw error always takes the shortest path."""
+    return (angle + np.pi) % (2.0 * np.pi) - np.pi
+
+
+# ADDED: CONTINUOUS ORIENTATION CORRECTION
+def get_pose_yaw_rad(pose):
+    """Extract yaw in radians from a Project AirSim ground-truth pose."""
+    rotation = pose["rotation"]
+    _, _, yaw = quaternion_to_rpy(
+        float(rotation["w"]),
+        float(rotation["x"]),
+        float(rotation["y"]),
+        float(rotation["z"]),
+    )
+    return float(yaw)
+
+
 # ---------------------------------------------------------------------------
 # Live telemetry
 # ---------------------------------------------------------------------------
@@ -582,6 +633,14 @@ async def display_telemetry(drone, targets, observation_status):
         x = float(position["x"])
         y = float(position["y"])
         z = float(position["z"])
+
+        # ADDED: CONTINUOUS ORIENTATION CORRECTION
+        # Measure the real ground-truth yaw every telemetry frame so the HUD shows
+        # whether the controller is actually keeping the requested world heading.
+        actual_yaw_rad = get_pose_yaw_rad(pose)
+        yaw_error_rad = wrap_angle_rad(SURVEY_YAW_RAD - actual_yaw_rad)
+        actual_yaw_deg = float(np.rad2deg(actual_yaw_rad))
+        yaw_error_deg = float(np.rad2deg(yaw_error_rad))
 
         measurements = get_all_target_pixel_counts(
             drone,
@@ -622,15 +681,20 @@ async def display_telemetry(drone, targets, observation_status):
                 "PASS" if measurement["within_distance_gate"] else "FAIL"
             )
 
+            visibility_gate_text = (
+                "PASS" if measurement["visibility_gate_passed"] else "FAIL"
+            )
 
             othonna_lines.append(
                 f"{plant_id}: "
                 f"visible pixels={visible_pixels} | "
                 f"X-ray pixels={xray_pixels} | "
                 f"visible fraction={visible_fraction:.3f} | "
+                f"visibility gate={visibility_gate_text} "
+                f"(>= {MIN_VISIBLE_FRACTION_FOR_OBSERVATION:.3f}) | "
                 f"occluded fraction={occluded_fraction:.3f} | "
-                f"distance={distance_to_target_m:.2f} m | " 
-                f"distance gate={distance_gate_text}"              
+                f"distance={distance_to_target_m:.2f} m | "
+                f"distance gate={distance_gate_text}"
             )
 
         if not othonna_lines:
@@ -641,6 +705,10 @@ async def display_telemetry(drone, targets, observation_status):
             f"X: {x:.2f} m\n"
             f"Y: {y:.2f} m\n"
             f"Z: {z:.2f} m\n"
+            # ADDED: CONTINUOUS ORIENTATION CORRECTION
+            f"Yaw target: {SURVEY_YAW_DEG:.2f} deg\n"
+            f"Yaw actual: {actual_yaw_deg:.2f} deg\n"
+            f"Yaw error: {yaw_error_deg:+.2f} deg\n"
             f"Othonnas observed so far: "
             f"{observed_count}/{len(observation_status)}\n"
             + "\n".join(othonna_lines)
@@ -797,102 +865,36 @@ async def manual_keyboard_control(drone):
 
 
 
-async def monitor_waypoint_motion(drone, waypoint):
-    """Return True if the drone effectively stops before reaching a waypoint."""
-    loop = asyncio.get_running_loop()
+# ADDED: ORIENTATION CORRECTION
+async def correct_survey_orientation(drone):
+    """Rotate to the configured absolute survey yaw before observations begin."""
+    projectairsim_log().info(
+        "Correcting drone orientation to survey yaw %.1f deg",
+        SURVEY_YAW_DEG,
+    )
 
-    pose = drone.get_ground_truth_pose()
-    position = pose["translation"]
-    previous_x = float(position["x"])
-    previous_y = float(position["y"])
-    previous_z = float(position["z"])
-    previous_time = loop.time()
-    monitor_started = previous_time
+    rotate_task = await drone.rotate_to_yaw_async(
+        yaw=SURVEY_YAW_RAD,
+        timeout_sec=YAW_CORRECTION_TIMEOUT_SEC,
+        margin=float(np.deg2rad(YAW_CORRECTION_MARGIN_DEG)),
+    )
+    await rotate_task
 
-    stall_started = None
-
-    while True:
-        await asyncio.sleep(MOTION_CHECK_INTERVAL_SEC)
-
-        pose = drone.get_ground_truth_pose()
-        position = pose["translation"]
-        current_x = float(position["x"])
-        current_y = float(position["y"])
-        current_z = float(position["z"])
-        current_time = loop.time()
-
-        dt = max(current_time - previous_time, 1e-6)
-        travelled = (
-            (current_x - previous_x) ** 2
-            + (current_y - previous_y) ** 2
-            + (current_z - previous_z) ** 2
-        ) ** 0.5
-        measured_speed = travelled / dt
-
-        dx = waypoint["x"] - current_x
-        dy = waypoint["y"] - current_y
-        dz = waypoint["z"] - current_z
-        horizontal_error = (dx**2 + dy**2) ** 0.5
-        vertical_error = abs(dz)
-
-        at_waypoint = (
-            horizontal_error <= POSITION_TOLERANCE_M
-            and vertical_error <= POSITION_TOLERANCE_M
-        )
-        past_startup_grace = (
-            current_time - monitor_started >= STALL_STARTUP_GRACE_SEC
-        )
-
-        if (
-            past_startup_grace
-            and not at_waypoint
-            and measured_speed < STALL_SPEED_THRESHOLD_MPS
-        ):
-            if stall_started is None:
-                stall_started = current_time
-            elif current_time - stall_started >= STALL_DURATION_SEC:
-                projectairsim_log().error(
-                    "DRONE STALL detected while moving to %s | "
-                    "measured speed=%.2f m/s | actual=(%.3f, %.3f, %.3f) | "
-                    "horizontal error=%.2f m vertical error=%.2f m",
-                    waypoint["id"],
-                    measured_speed,
-                    current_x,
-                    current_y,
-                    current_z,
-                    horizontal_error,
-                    vertical_error,
-                )
-
-                #report the stall to the waypoint mover immediately
-                # so it can cancel this controller command and retry the SAME
-                # waypoint instead of waiting for the long movement timeout.
-                return True
-      
-        else:
-            stall_started = None
-
-        previous_x = current_x
-        previous_y = current_y
-        previous_z = current_z
-        previous_time = current_time
 
 
 
 async def move_to_waypoint_precisely(drone, waypoint):
     """
-    Fly to a waypoint and verify the resulting ground-truth position.
+    Fly to a waypoint using a short closed-loop control pulse every
+    AUTONOMOUS_CONTROL_INTERVAL_SEC.
 
-    If the drone stalls, or the movement command ends outside the waypoint
-    tolerance, retry the SAME waypoint once. A second failure aborts the mission.
     """
 
-   
+    loop = asyncio.get_running_loop()
     last_failure = None
 
     for attempt in range(1, MAX_WAYPOINT_ATTEMPTS + 1):
-        # Recalculate distance on every attempt because a retry starts from the
-        # drone's new/current position.
+        # Recalculate the timeout from the actual current position on each retry.
         start_pose = drone.get_ground_truth_pose()
         start_position = start_pose["translation"]
         start_x = float(start_position["x"])
@@ -920,146 +922,196 @@ async def move_to_waypoint_precisely(drone, waypoint):
             )
 
         projectairsim_log().info(
-            "Moving to %s at %.1f m/s | waypoint NED=(%.3f, %.3f, %.3f) | "
-            "distance=%.1f m expected=%.1f s timeout=%.1f s | attempt=%d/%d",
+            "Moving to %s with %.2f s closed-loop control pulses at %.1f m/s | "
+            "waypoint NED=(%.3f, %.3f, %.3f) | distance=%.1f m | "
+            "target yaw=%.1f deg | attempt=%d/%d",
             waypoint["id"],
+            AUTONOMOUS_CONTROL_INTERVAL_SEC,
             FLIGHT_VELOCITY_MPS,
             waypoint["x"],
             waypoint["y"],
             waypoint["z"],
             distance,
-            expected_time,
-            timeout_sec,
+            SURVEY_YAW_DEG,
             attempt,
             MAX_WAYPOINT_ATTEMPTS,
         )
 
-        controller_task = await drone.move_to_position_async(
-            north=waypoint["x"],
-            east=waypoint["y"],
-            down=waypoint["z"],
-            velocity=FLIGHT_VELOCITY_MPS,
-            timeout_sec=timeout_sec,
-        )
+        attempt_started = loop.time()
+        monitor_started = attempt_started
+        stall_started = None
+        last_yaw_warning = attempt_started - YAW_WARNING_LOG_INTERVAL_SEC
 
-        # ensure_future accepts either the asyncio Task returned by Project
-        # AirSim or another awaitable representing the controller request.
-        move_task = asyncio.ensure_future(controller_task)
-        motion_monitor = asyncio.create_task(
-            monitor_waypoint_motion(drone, waypoint)
-        )
+        previous_x = start_x
+        previous_y = start_y
+        previous_z = start_z
+        previous_time = attempt_started
 
-        stall_detected = False
+        failure_reason = None
 
-        try:
-            done, _ = await asyncio.wait(
-                {move_task, motion_monitor},
-                return_when=asyncio.FIRST_COMPLETED,
+        while True:
+
+            # Re-read the REAL position and orientation before every command pulse.
+            pose = drone.get_ground_truth_pose()
+            position = pose["translation"]
+
+            current_x = float(position["x"])
+            current_y = float(position["y"])
+            current_z = float(position["z"])
+            current_yaw_rad = get_pose_yaw_rad(pose)
+
+            current_time = loop.time()
+
+            dx = waypoint["x"] - current_x
+            dy = waypoint["y"] - current_y
+            dz = waypoint["z"] - current_z
+
+            horizontal_error = (dx**2 + dy**2) ** 0.5
+            vertical_error = abs(dz)
+
+            #orientation correction
+            yaw_error_rad = wrap_angle_rad(SURVEY_YAW_RAD - current_yaw_rad)
+            yaw_error_deg = float(np.rad2deg(yaw_error_rad))
+
+            at_waypoint = (
+                horizontal_error <= POSITION_TOLERANCE_M
+                and vertical_error <= POSITION_TOLERANCE_M
             )
 
-            if motion_monitor in done:
-                stall_detected = bool(motion_monitor.result())
+            if at_waypoint:
 
-            if stall_detected:
-                # Stop the stuck Project AirSim controller command before
-                # issuing the retry.
-                cancelled = drone.cancel_last_task()
-                projectairsim_log().error(
-                    "Cancelled stalled movement to %s | "
-                    "cancel_last_task returned %s",
+                stop_task = await drone.move_by_velocity_z_async(
+                    v_north=0.0,
+                    v_east=0.0,
+                    z=waypoint["z"],
+                    duration=AUTONOMOUS_CONTROL_INTERVAL_SEC,
+                    yaw_control_mode=YawControlMode.MaxDegreeOfFreedom,
+                    yaw_is_rate=False,
+                    yaw=SURVEY_YAW_RAD,
+                )#stay at point and continue to correct yaw.
+                await stop_task
+
+                final_pose = drone.get_ground_truth_pose()
+                final_yaw_rad = get_pose_yaw_rad(final_pose)
+                final_yaw_error_deg = float(
+                    np.rad2deg(wrap_angle_rad(SURVEY_YAW_RAD - final_yaw_rad))
+                )
+
+                projectairsim_log().info(
+                    "Reached %s | actual=(%.3f, %.3f, %.3f) | "
+                    "horizontal error=%.2f m vertical error=%.2f m | "
+                    "yaw error=%+.2f deg",
                     waypoint["id"],
-                    cancelled,
+                    current_x,
+                    current_y,
+                    current_z,
+                    horizontal_error,
+                    vertical_error,
+                    final_yaw_error_deg,
                 )
+                return current_x, current_y, current_z
 
-                if not move_task.done():
-                    move_task.cancel()
-                    try:
-                        await move_task
-                    except asyncio.CancelledError:
-                        pass
-
-                last_failure = RuntimeError(
-                    f"Drone stalled while moving to waypoint {waypoint['id']}"
+            elapsed = current_time - attempt_started
+            if elapsed >= timeout_sec:
+                failure_reason = (
+                    f"Timed out moving to waypoint {waypoint['id']} after "
+                    f"{elapsed:.2f} s"
                 )
+                projectairsim_log().error(failure_reason)
+                break
 
+
+            dt = max(current_time - previous_time, 1e-6)
+            travelled = (
+                (current_x - previous_x) ** 2
+                + (current_y - previous_y) ** 2
+                + (current_z - previous_z) ** 2
+            ) ** 0.5
+            measured_speed = travelled / dt
+
+            past_startup_grace = (
+                current_time - monitor_started >= STALL_STARTUP_GRACE_SEC
+            )
+
+            if (
+                past_startup_grace
+                and measured_speed < STALL_SPEED_THRESHOLD_MPS
+            ):
+                if stall_started is None:
+                    stall_started = current_time
+                elif current_time - stall_started >= STALL_DURATION_SEC:
+                    failure_reason = (
+                        f"Drone stalled while moving to waypoint {waypoint['id']}"
+                    )
+                    projectairsim_log().error(
+                        "DRONE STALL detected while moving to %s | "
+                        "measured speed=%.2f m/s | actual=(%.3f, %.3f, %.3f) | "
+                        "horizontal error=%.2f m vertical error=%.2f m",
+                        waypoint["id"],
+                        measured_speed,
+                        current_x,
+                        current_y,
+                        current_z,
+                        horizontal_error,
+                        vertical_error,
+                    )
+                    break
             else:
-                # The movement command finished first. Propagate any controller
-                # exception before checking the final ground-truth position.
-                await move_task
+                stall_started = None
 
-        finally:
-            if not motion_monitor.done():
-                motion_monitor.cancel()
-                try:
-                    await motion_monitor
-                except asyncio.CancelledError:
-                    pass
+            # ADDED: CONTINUOUS ORIENTATION CORRECTION
+            # Log sustained heading error at most once per second. The correction
+            # itself is still reissued every control pulse, including when the
+            # error is inside the configured margin.
+            if (
+                abs(yaw_error_deg) > YAW_CORRECTION_MARGIN_DEG
+                and current_time - last_yaw_warning
+                >= YAW_WARNING_LOG_INTERVAL_SEC
+            ):
+                projectairsim_log().warning(
+                    "Yaw correction active | target=%.2f deg | "
+                    "actual=%.2f deg | error=%+.2f deg",
+                    SURVEY_YAW_DEG,
+                    float(np.rad2deg(current_yaw_rad)),
+                    yaw_error_deg,
+                )
+                last_yaw_warning = current_time
 
-        if stall_detected:
-            if attempt < MAX_WAYPOINT_ATTEMPTS:
-                await asyncio.sleep(WAYPOINT_SETTLE_SEC)
-                continue
 
-            projectairsim_log().error(
-                "Waypoint %s stalled again on retry - aborting mission",
-                waypoint["id"],
+            if horizontal_error > 1e-9:
+                commanded_speed = min(
+                    FLIGHT_VELOCITY_MPS,
+                    max(0.5, horizontal_error),
+                )
+                v_north = commanded_speed * dx / horizontal_error
+                v_east = commanded_speed * dy / horizontal_error #alter x/y velocity components based on proximity.
+            else:
+                v_north = 0.0
+                v_east = 0.0
+
+            control_task = await drone.move_by_velocity_z_async(
+                v_north=v_north,
+                v_east=v_east,
+                z=waypoint["z"],
+                duration=AUTONOMOUS_CONTROL_INTERVAL_SEC,
+                yaw_control_mode=YawControlMode.MaxDegreeOfFreedom,
+                yaw_is_rate=False,
+                yaw=SURVEY_YAW_RAD,
             )
-            raise last_failure
+            await control_task
 
-        # Give the vehicle a moment to settle before sampling its actual position.
-        await asyncio.sleep(WAYPOINT_SETTLE_SEC)
-
-        pose = drone.get_ground_truth_pose()
-        position = pose["translation"]
-
-        current_x = float(position["x"])
-        current_y = float(position["y"])
-        current_z = float(position["z"])
-
-        dx = waypoint["x"] - current_x
-        dy = waypoint["y"] - current_y
-        dz = waypoint["z"] - current_z
-
-        horizontal_error = (dx**2 + dy**2) ** 0.5
-        vertical_error = abs(dz)
-
-        if (
-            horizontal_error <= POSITION_TOLERANCE_M
-            and vertical_error <= POSITION_TOLERANCE_M
-        ):
-            projectairsim_log().info(
-                "Reached %s | actual=(%.3f, %.3f, %.3f) | "
-                "horizontal error=%.2f m vertical error=%.2f m",
-                waypoint["id"],
-                current_x,
-                current_y,
-                current_z,
-                horizontal_error,
-                vertical_error,
-            )
-            return current_x, current_y, current_z
-
-        projectairsim_log().error(
-            "%s movement ended before waypoint was reached | "
-            "actual=(%.3f, %.3f, %.3f) | "
-            "horizontal error=%.2f m vertical error=%.2f m | attempt=%d/%d",
-            waypoint["id"],
-            current_x,
-            current_y,
-            current_z,
-            horizontal_error,
-            vertical_error,
-            attempt,
-            MAX_WAYPOINT_ATTEMPTS,
-        )
+            previous_x = current_x
+            previous_y = current_y
+            previous_z = current_z
+            previous_time = current_time
 
         last_failure = RuntimeError(
-            f"Failed to reach waypoint {waypoint['id']}: "
-            f"horizontal error={horizontal_error:.2f} m, "
-            f"vertical error={vertical_error:.2f} m"
+            failure_reason
+            or f"Failed to reach waypoint {waypoint['id']}"
         )
 
         if attempt < MAX_WAYPOINT_ATTEMPTS:
+            await asyncio.sleep(WAYPOINT_SETTLE_SEC)
             continue
 
         projectairsim_log().error(
@@ -1070,7 +1122,6 @@ async def move_to_waypoint_precisely(drone, waypoint):
 
     # Defensive fallback; the loop above always returns or raises.
     raise last_failure
-
 
 
 async def climb_to_flight_altitude(drone):
@@ -1106,6 +1157,10 @@ async def climb_to_flight_altitude(drone):
         down=-FLIGHT_ALTITUDE_M,
         velocity=FLIGHT_VELOCITY_MPS,
         timeout_sec=climb_timeout_sec,
+
+        yaw_control_mode=YawControlMode.MaxDegreeOfFreedom,
+        yaw_is_rate=False,
+        yaw=SURVEY_YAW_RAD,
     )
 
     await climb_task
@@ -1225,7 +1280,7 @@ async def main(manual=False):
                 print()
                 print_observation_summary(
                     observation_status,
-                    manual_survey_time_sec,  # CHANGED
+                    manual_survey_time_sec,  
                 )
 
                 # Safety fallback: if manual mode exits because of an exception,
@@ -1280,6 +1335,8 @@ async def main(manual=False):
             first_waypoint,
         )
 
+        await correct_survey_orientation(drone)
+
         # The autonomous survey cameras start ONLY after the drone
         # has reached and settled at the first sweep waypoint.
         projectairsim_log().info(
@@ -1327,57 +1384,50 @@ async def main(manual=False):
                 )
 
         finally:
-            # Capture the end immediately when the sweep finishes/aborts, before
-            # camera shutdown and landing so cleanup cannot inflate survey time.
             survey_end_time = asyncio.get_running_loop().time()
-            survey_time_sec = max(0.0, survey_end_time - survey_start_time)
+            survey_time_sec = max(
+                0.0,
+                survey_end_time - survey_start_time,
+            )
 
-
-            # stop observation and camera display as soon as the
-            # survey path ends. Landing is outside the survey.
+            # Stop the observation task.
             telemetry_task.cancel()
             try:
                 await telemetry_task
             except asyncio.CancelledError:
                 pass
+            except Exception as err:
+                projectairsim_log().warning(
+                    "Telemetry task ended with error during cleanup: %s",
+                    err,
+                )
 
-            segmentation_stop.set()
-            await segmentation_task
-
-            projectairsim_log().info("Survey cameras stopped")
-
+            # Results no longer depend on the debug camera, so save them NOW.
             print()
             print_observation_summary(
                 observation_status,
                 survey_time_sec,
             )
 
-            # CHANGED: this exporter existed already but was never called in the
-            # autonomous survey path. Export it now, at the actual survey end.
             export_survey_results(
                 targets,
                 observation_status,
             )
 
+            # The debug viewer is non-essential. Its failure must never prevent
+            # experimental results from being saved.
+            segmentation_stop.set()
+            try:
+                await segmentation_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as err:
+                projectairsim_log().warning(
+                    "Debug camera ended with error during cleanup: %s",
+                    err,
+                )
 
-        # The survey is one continuous flight, so land only after the final
-        # sweep waypoint has been reached.
-        projectairsim_log().info("Sweep complete - landing")
-
-        land_task = await drone.land_async()
-        await land_task
-
-        projectairsim_log().info("Survey sweep complete")
-
-
-        drone.disarm()
-        drone.disable_api_control()
-
-    except Exception as err:
-        projectairsim_log().error(
-            f"Exception occurred: {err}",
-            exc_info=True,
-        )
+            projectairsim_log().info("Survey cameras stopped")
 
     finally:
         client.disconnect()
