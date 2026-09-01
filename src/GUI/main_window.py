@@ -28,7 +28,6 @@ import rasterio
 from pyproj import Transformer
 from PySide6.QtCore import QThreadPool, Qt
 from PySide6.QtGui import QAction, QActionGroup
-
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -61,6 +60,8 @@ from .raster_view import (
 )
 from .worker import FunctionWorker
 
+from SOE.EXR_to_NDVI import load_ndvi_exr
+
 from SOE.downsample_to_resolution import downsample_to_resolution
 
 
@@ -87,6 +88,35 @@ SelectedModules = dict[
     str,
     tuple[ModuleRunner, dict[str, Any]],
 ]
+
+
+def load_ndvi_exr_preview(
+    *,
+    path: str | Path,
+    capture_x_cm: float,
+    capture_y_cm: float,
+    ortho_width_cm: float,
+    encoded: bool,
+) -> dict[str, Any]:
+    """Load an EXR and return a mapping accepted by ``RasterView``."""
+    result = load_ndvi_exr(
+        path,
+        capture_x_cm=capture_x_cm,
+        capture_y_cm=capture_y_cm,
+        ortho_width_cm=ortho_width_cm,
+        encoded=encoded,
+    )
+
+    return {
+        "data": result["ndvi"],
+        "transform": result["transform"],
+        "crs": result["crs"],
+        "title": "NDVI EXR preview",
+        "colour_map": "RdYlGn",
+        "colourbar_label": "NDVI",
+        "vmin": -1.0,
+        "vmax": 1.0,
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -492,7 +522,6 @@ class MainWindow(QMainWindow):
 
         self.ndvi_checkbox = QCheckBox("NDVI")
         botanical_layout.addWidget(self.ndvi_checkbox)
-
 
         self.sentinel_ndvi_radio = QRadioButton("Sentinel-2 API")
         self.exr_ndvi_radio = QRadioButton("Unreal NDVI EXR")
@@ -1338,11 +1367,33 @@ class MainWindow(QMainWindow):
         self.ndvi_exr_path_label.setToolTip(str(self.ndvi_exr_path))
         self.exr_ndvi_radio.setChecked(True)
         self.ndvi_checkbox.setChecked(True)
-        self.status_label.setText(
-            "NDVI EXR selected. Enter its Unreal capture position and "
-            "orthographic width, then run the NDVI module."
+
+        self.ndvi_view.show_message("Loading NDVI EXR preview…")
+        if self.tabs.indexOf(self.ndvi_view) == -1:
+            self.tabs.addTab(self.ndvi_view, "NDVI")
+        self.tabs.setCurrentWidget(self.ndvi_view)
+
+        worker = FunctionWorker(
+            load_ndvi_exr_preview,
+            path=self.ndvi_exr_path,
+            capture_x_cm=self.exr_capture_x_spin.value(),
+            capture_y_cm=self.exr_capture_y_spin.value(),
+            ortho_width_cm=self.exr_ortho_width_spin.value(),
+            encoded=self.exr_encoded_checkbox.isChecked(),
         )
+        self._workers.add(worker)
+        worker.signals.result.connect(self._receive_ndvi_exr_preview)
+        worker.signals.error.connect(self._receive_ndvi_exr_preview_error)
+        worker.signals.finished.connect(
+            lambda: self._finish_worker(worker)
+        )
+
+        self.status_label.setText(
+            "Loading NDVI EXR preview…"
+        )
+        self.progress_bar.setRange(0, 0)
         self._update_controls()
+        self.thread_pool.start(worker)
 
     def choose_dem(self) -> None:
         """Ask the user for a local GeoTIFF and display its first band."""
@@ -1605,6 +1656,53 @@ class MainWindow(QMainWindow):
         self._update_controls()
         self.thread_pool.start(worker)
 
+    def _receive_ndvi_exr_preview(
+        self,
+        raw_result: dict[str, Any],
+    ) -> None:
+        """Display the decoded EXR immediately in the NDVI tab."""
+        try:
+            display_result = coerce_raster_result(
+                raw_result,
+                default_title="NDVI EXR preview",
+                default_colour_map="RdYlGn",
+                default_colourbar_label="NDVI",
+            )
+            self.ndvi_view.show_result(display_result)
+        except Exception as error:  # noqa: BLE001 - report preview failures
+            self._show_error("NDVI EXR preview failed", str(error))
+            self.ndvi_view.show_message(
+                "The selected NDVI EXR could not be displayed."
+            )
+            self.status_label.setText("NDVI EXR preview failed.")
+            return
+
+        if self.tabs.indexOf(self.ndvi_view) == -1:
+            self.tabs.addTab(self.ndvi_view, "NDVI")
+        self.tabs.setCurrentWidget(self.ndvi_view)
+        self.status_label.setText(
+            "NDVI EXR preview loaded. Run the selected modules to align it "
+            "to the DEM and include it in the OPF."
+        )
+
+    def _receive_ndvi_exr_preview_error(
+        self,
+        message: str,
+        traceback_text: str,
+    ) -> None:
+        """Show an exception raised while decoding an EXR preview."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Critical)
+        box.setWindowTitle("NDVI EXR preview failed")
+        box.setText(message or "The selected EXR could not be loaded.")
+        box.setDetailedText(traceback_text)
+        box.exec()
+
+        self.ndvi_view.show_message(
+            "The selected NDVI EXR could not be displayed."
+        )
+        self.status_label.setText("NDVI EXR preview failed.")
+
     def _receive_pipeline_result(self, output: PipelineOutput) -> None:
         """Store and display all results from a completed pipeline."""
 
@@ -1629,7 +1727,6 @@ class MainWindow(QMainWindow):
                 fallback_transform=output.transform,
                 fallback_crs=output.crs,
             )
-
 
         if "botanical" in results:
             self._receive_module_result(
