@@ -1,4 +1,4 @@
-"""Reusable background worker for long-running Rivelero modules. Basically, all the QRunnable boilerplate."""
+"""Reusable background worker for long-running Rivelero modules."""
 
 from __future__ import annotations
 
@@ -18,12 +18,7 @@ class WorkerSignals(QObject):
 
 
 class FunctionWorker(QRunnable):
-    """
-    Run an ordinary Python callable in Qt's global thread pool.
-
-    The callable must not update Qt widgets directly. Its return value is
-    emitted through ``signals.result`` and handled by the main GUI thread.
-    """
+    """Run an ordinary Python callable in Qt's global thread pool."""
 
     def __init__(
         self,
@@ -42,7 +37,7 @@ class FunctionWorker(QRunnable):
         """Execute the callable and report its outcome through Qt signals."""
         try:
             result = self.function(*self.args, **self.kwargs)
-        except Exception as error:  # noqa: BLE001 - worker must report all failures
+        except Exception as error:  # noqa: BLE001 - report all worker failures
             self.signals.error.emit(str(error), traceback.format_exc())
         else:
             self.signals.result.emit(result)

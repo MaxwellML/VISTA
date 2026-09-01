@@ -61,6 +61,8 @@ from rasterio.enums import Resampling
 from rasterio.windows import Window
 from rasterio.windows import bounds as window_bounds
 
+from .EXR_to_NDVI import UNREAL_LOCAL_CRS, load_ndvi_exr
+
 
 CDSE_TOKEN_URL = (
     "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/"
@@ -103,11 +105,13 @@ class BotanicalSuitabilityFieldResult:
     transform: Affine
     crs: CRS
 
-    time_from: str
-    time_to: str
+    time_from: str | None
+    time_to: str | None
     pixel_size_m: int
     max_cloud_coverage: int
     mosaicking_order: str
+
+    source: str
 
     ndvi_floor: float
     ndvi_ceiling: float
@@ -203,13 +207,13 @@ class BotanicalSuitabilityFieldResult:
         Return a mapping accepted by the GUI's ``coerce_raster_result()``.
         """
         return {
-            "data": self.field,
+            "data": self.ndvi,
             "transform": self.transform,
             "crs": self.crs,
-            "title": "NDVI Field",
-            "colour_map": "YlGn",
-            "colourbar_label": "NDVI Field height",
-            "vmin": 0.0,
+            "title": "NDVI",
+            "colour_map": "RdYlGn",
+            "colourbar_label": "NDVI",
+            "vmin": -1.0,
             "vmax": 1.0,
         }
 
@@ -218,8 +222,8 @@ def build_botanical_suitability_field(
     *,
     dem_path: str | Path,
     target_geometry: Geometry | Sequence[Geometry] | None,
-    time_from: str,
-    time_to: str,
+    time_from: str | None = None,
+    time_to: str | None = None,
     client_id: str | None = None,
     client_secret: str | None = None,
     pixel_size_m: int = 10,
@@ -232,6 +236,11 @@ def build_botanical_suitability_field(
     mask_water: bool = True,
     all_touched: bool = False,
     request_padding_cells: int = 1,
+    ndvi_exr_path: str | Path | None = None,
+    exr_capture_x_cm: float | None = None,
+    exr_capture_y_cm: float | None = None,
+    exr_ortho_width_cm: float | None = None,
+    exr_encoded: bool = True,
 ) -> BotanicalSuitabilityFieldResult:
     """
     Build a DEM-aligned botanical suitability field.
@@ -247,7 +256,19 @@ def build_botanical_suitability_field(
         valid DEM extent.
 
     time_from, time_to:
-        ISO UTC timestamps accepted by the CDSE Process API.
+        ISO UTC timestamps accepted by the CDSE Process API. They are not
+        required when ``ndvi_exr_path`` is supplied.
+
+    ndvi_exr_path:
+        Optional orthographic Unreal NDVI capture. When supplied, this source
+        replaces the Sentinel-2 API request for this run.
+
+    exr_capture_x_cm, exr_capture_y_cm, exr_ortho_width_cm:
+        Unreal camera position and orthographic width used to georeference the
+        EXR in the Unreal local coordinate system.
+
+    exr_encoded:
+        Decode the EXR using ``NDVI = 2 * encoded - 1``.
 
     client_id, client_secret:
         CDSE OAuth credentials. If omitted, the function reads
@@ -292,9 +313,11 @@ def build_botanical_suitability_field(
     BotanicalSuitabilityFieldResult
         A 0..1 field aligned exactly to the DEM raster grid.
     """
+    using_exr = ndvi_exr_path is not None
+
     _validate_field_parameters(
-        time_from=time_from,
-        time_to=time_to,
+        time_from=None if using_exr else time_from,
+        time_to=None if using_exr else time_to,
         pixel_size_m=pixel_size_m,
         max_cloud_coverage=max_cloud_coverage,
         mosaicking_order=mosaicking_order,
@@ -315,7 +338,13 @@ def build_botanical_suitability_field(
         if source.crs is None:
             raise ValueError("The DEM has no coordinate reference system.")
 
-        if not source.crs.is_projected:
+        if using_exr and source.crs != UNREAL_LOCAL_CRS:
+            raise ValueError(
+                "An Unreal NDVI EXR can only be aligned to a DEM using the "
+                "same Unreal local CRS."
+            )
+
+        if not using_exr and not source.crs.is_projected:
             raise ValueError(
                 "Use a projected DEM so the botanical and visibility fields "
                 "share meaningful projected X/Y coordinates."
@@ -345,31 +374,58 @@ def build_botanical_suitability_field(
             "The target region does not contain any valid DEM cells."
         )
 
-    request_bounds_dem = _mask_bounds(
-        target_mask,
-        transform=dem_transform,
-        padding_cells=request_padding_cells,
-    )
+    if using_exr:
+        missing_exr_metadata = [
+            name
+            for name, value in (
+                ("exr_capture_x_cm", exr_capture_x_cm),
+                ("exr_capture_y_cm", exr_capture_y_cm),
+                ("exr_ortho_width_cm", exr_ortho_width_cm),
+            )
+            if value is None
+        ]
+        if missing_exr_metadata:
+            raise ValueError(
+                "An EXR NDVI source requires "
+                + ", ".join(missing_exr_metadata)
+                + "."
+            )
 
-    bbox_lonlat = transform_bounds(
-        dem_crs,
-        "EPSG:4326",
-        *request_bounds_dem,
-        densify_pts=21,
-    )
+        ndvi_result = load_ndvi_exr(
+            ndvi_exr_path,
+            capture_x_cm=float(exr_capture_x_cm),
+            capture_y_cm=float(exr_capture_y_cm),
+            ortho_width_cm=float(exr_ortho_width_cm),
+            encoded=exr_encoded,
+        )
+        source_name = "Unreal Engine NDVI EXR"
+    else:
+        request_bounds_dem = _mask_bounds(
+            target_mask,
+            transform=dem_transform,
+            padding_cells=request_padding_cells,
+        )
 
-    ndvi_result = fetch_ndvi(
-        bbox_lonlat=bbox_lonlat,
-        time_from=time_from,
-        time_to=time_to,
-        client_id=client_id,
-        client_secret=client_secret,
-        pixel_size_m=pixel_size_m,
-        max_cloud_coverage=max_cloud_coverage,
-        mosaicking_order=mosaicking_order,
-        timeout=timeout,
-        mask_water=mask_water,
-    )
+        bbox_lonlat = transform_bounds(
+            dem_crs,
+            "EPSG:4326",
+            *request_bounds_dem,
+            densify_pts=21,
+        )
+
+        ndvi_result = fetch_ndvi(
+            bbox_lonlat=bbox_lonlat,
+            time_from=time_from,
+            time_to=time_to,
+            client_id=client_id,
+            client_secret=client_secret,
+            pixel_size_m=pixel_size_m,
+            max_cloud_coverage=max_cloud_coverage,
+            mosaicking_order=mosaicking_order,
+            timeout=timeout,
+            mask_water=mask_water,
+        )
+        source_name = "Sentinel-2 L2A NDVI"
 
     aligned_ndvi, aligned_valid = _align_ndvi_to_grid(
         ndvi=ndvi_result["ndvi"],
@@ -421,6 +477,7 @@ def build_botanical_suitability_field(
         pixel_size_m=int(pixel_size_m),
         max_cloud_coverage=int(max_cloud_coverage),
         mosaicking_order=mosaicking_order,
+        source=source_name,  
         ndvi_floor=float(ndvi_floor),
         ndvi_ceiling=float(ndvi_ceiling),
     )
@@ -462,9 +519,9 @@ def save_botanical_suitability_field(
             "botanical_suitability_field_height",
         )
         destination.update_tags(
-            time_from=result.time_from,
-            time_to=result.time_to,
-            source="Sentinel-2 L2A NDVI",
+            time_from=result.time_from or "",
+            time_to=result.time_to or "",
+            source=result.source,
             pixel_size_m=result.pixel_size_m,
             max_cloud_coverage=result.max_cloud_coverage,
             mosaicking_order=result.mosaicking_order,
@@ -952,8 +1009,8 @@ def _get_cdse_access_token(
 
 def _validate_field_parameters(
     *,
-    time_from: str,
-    time_to: str,
+    time_from: str | None,
+    time_to: str | None,
     pixel_size_m: int,
     max_cloud_coverage: int,
     mosaicking_order: str,
@@ -961,14 +1018,33 @@ def _validate_field_parameters(
     ndvi_ceiling: float,
     request_padding_cells: int,
 ) -> None:
-    _validate_fetch_parameters(
-        bbox_lonlat=(-1.0, -1.0, 1.0, 1.0),
-        time_from=time_from,
-        time_to=time_to,
-        pixel_size_m=pixel_size_m,
-        max_cloud_coverage=max_cloud_coverage,
-        mosaicking_order=mosaicking_order,
-    )
+    if (time_from is None) != (time_to is None):
+        raise ValueError(
+            "Sentinel-2 start and end dates must either both be supplied or "
+            "both be omitted for an EXR source."
+        )
+
+    if time_from is not None and time_to is not None:
+        _validate_fetch_parameters(
+            bbox_lonlat=(-1.0, -1.0, 1.0, 1.0),
+            time_from=time_from,
+            time_to=time_to,
+            pixel_size_m=pixel_size_m,
+            max_cloud_coverage=max_cloud_coverage,
+            mosaicking_order=mosaicking_order,
+        )
+    else:
+        if pixel_size_m <= 0:
+            raise ValueError("Pixel size must be greater than zero.")
+        if not 0 <= max_cloud_coverage <= 100:
+            raise ValueError(
+                "Maximum cloud coverage must be between 0 and 100."
+            )
+        if mosaicking_order not in {"leastCC", "mostRecent"}:
+            raise ValueError(
+                "Mosaicking order should normally be 'leastCC' or "
+                "'mostRecent'."
+            )
 
     if not np.isfinite(ndvi_floor):
         raise ValueError("NDVI floor must be finite.")

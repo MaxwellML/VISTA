@@ -28,10 +28,13 @@ import rasterio
 from pyproj import Transformer
 from PySide6.QtCore import QThreadPool, Qt
 from PySide6.QtGui import QAction, QActionGroup
+
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
+    QDoubleSpinBox,
     QFileDialog,
+    QFormLayout,
     QFrame,
     QGroupBox,
     QHBoxLayout,
@@ -41,6 +44,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QRadioButton,
     QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
@@ -204,6 +208,7 @@ class MainWindow(QMainWindow):
         self.observer_geometry = observer_geometry
         self.time_from = time_from
         self.time_to = time_to
+        self.ndvi_exr_path: Path | None = None  #CHANGED: Selected EXR source.
 
         self.dem_path: Path | None = None
         self.dem_transform: Any | None = None
@@ -488,6 +493,47 @@ class MainWindow(QMainWindow):
         self.ndvi_checkbox = QCheckBox("NDVI")
         botanical_layout.addWidget(self.ndvi_checkbox)
 
+
+        self.sentinel_ndvi_radio = QRadioButton("Sentinel-2 API")
+        self.exr_ndvi_radio = QRadioButton("Unreal NDVI EXR")
+        self.sentinel_ndvi_radio.setChecked(True)
+        botanical_layout.addWidget(self.sentinel_ndvi_radio)
+        botanical_layout.addWidget(self.exr_ndvi_radio)
+
+        self.load_ndvi_exr_button = QPushButton("Choose EXR…")
+        self.load_ndvi_exr_button.clicked.connect(self.choose_ndvi_exr)
+        botanical_layout.addWidget(self.load_ndvi_exr_button)
+
+        self.ndvi_exr_path_label = QLabel("No EXR selected")
+        self.ndvi_exr_path_label.setObjectName("pathLabel")
+        self.ndvi_exr_path_label.setWordWrap(True)
+        self.ndvi_exr_path_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        botanical_layout.addWidget(self.ndvi_exr_path_label)
+
+        exr_metadata_form = QFormLayout()
+        self.exr_capture_x_spin = self._make_exr_coordinate_spinbox()
+        self.exr_capture_y_spin = self._make_exr_coordinate_spinbox()
+        self.exr_ortho_width_spin = QDoubleSpinBox()
+        self.exr_ortho_width_spin.setRange(0.01, 1_000_000_000.0)
+        self.exr_ortho_width_spin.setDecimals(3)
+        self.exr_ortho_width_spin.setValue(100_000.0)
+        self.exr_ortho_width_spin.setSuffix(" cm")
+        exr_metadata_form.addRow("Capture X:", self.exr_capture_x_spin)
+        exr_metadata_form.addRow("Capture Y:", self.exr_capture_y_spin)
+        exr_metadata_form.addRow(
+            "Ortho width:",
+            self.exr_ortho_width_spin,
+        )
+        botanical_layout.addLayout(exr_metadata_form)
+
+        self.exr_encoded_checkbox = QCheckBox(
+            "Encoded as (NDVI + 1) / 2"
+        )
+        self.exr_encoded_checkbox.setChecked(True)
+        botanical_layout.addWidget(self.exr_encoded_checkbox)
+
         redundancy_group = QGroupBox("Redundancy correction")
         redundancy_layout = QVBoxLayout(redundancy_group)
 
@@ -512,6 +558,8 @@ class MainWindow(QMainWindow):
 
         self.los_checkbox.toggled.connect(self._update_controls)
         self.ndvi_checkbox.toggled.connect(self._update_controls)
+        self.sentinel_ndvi_radio.toggled.connect(self._update_controls)
+        self.exr_ndvi_radio.toggled.connect(self._update_controls)
         self.obstacle_checkbox.toggled.connect(self._update_controls)
         self.redundancy_checkbox.toggled.connect(self._update_controls)
 
@@ -1264,6 +1312,38 @@ class MainWindow(QMainWindow):
 
 
 
+    @staticmethod
+    def _make_exr_coordinate_spinbox() -> QDoubleSpinBox:
+        """Create a centimetre-valued Unreal capture-coordinate input."""
+        spinbox = QDoubleSpinBox()
+        spinbox.setRange(-1_000_000_000.0, 1_000_000_000.0)
+        spinbox.setDecimals(3)
+        spinbox.setSuffix(" cm")
+        return spinbox
+
+    def choose_ndvi_exr(self) -> None:
+        """Choose the Unreal EXR used by the botanical NDVI module."""
+        filename, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open Unreal NDVI EXR",
+            "",
+            "OpenEXR files (*.exr);;All files (*)",
+        )
+
+        if not filename:
+            return
+
+        self.ndvi_exr_path = Path(filename)
+        self.ndvi_exr_path_label.setText(str(self.ndvi_exr_path))
+        self.ndvi_exr_path_label.setToolTip(str(self.ndvi_exr_path))
+        self.exr_ndvi_radio.setChecked(True)
+        self.ndvi_checkbox.setChecked(True)
+        self.status_label.setText(
+            "NDVI EXR selected. Enter its Unreal capture position and "
+            "orthographic width, then run the NDVI module."
+        )
+        self._update_controls()
+
     def choose_dem(self) -> None:
         """Ask the user for a local GeoTIFF and display its first band."""
 
@@ -1380,6 +1460,7 @@ class MainWindow(QMainWindow):
         run_los = self.los_checkbox.isChecked()
         run_ndvi = self.ndvi_checkbox.isChecked()
         run_obstacle = self.obstacle_checkbox.isChecked()
+        use_ndvi_exr = self.exr_ndvi_radio.isChecked()
 
         if not any((run_los, run_ndvi, run_obstacle)):
             QMessageBox.warning(
@@ -1404,7 +1485,16 @@ class MainWindow(QMainWindow):
                 "Line of sight requires a target region."
             )
 
-        if run_ndvi and not (self.time_from and self.time_to):
+        if run_ndvi and use_ndvi_exr and self.ndvi_exr_path is None:
+            missing_requirements.append(
+                "NDVI is set to Unreal EXR, but no EXR file is selected."
+            )
+
+        if (
+            run_ndvi
+            and not use_ndvi_exr
+            and not (self.time_from and self.time_to)
+        ):
             missing_requirements.append(
                 "NDVI requires Sentinel-2 start and end dates."
             )
@@ -1432,15 +1522,42 @@ class MainWindow(QMainWindow):
             self.visibility_result = None
 
         if run_ndvi:
+            botanical_kwargs: dict[str, Any] = {
+                "target_geometry": self.target_geometry,
+            }
+
+            if use_ndvi_exr:
+                botanical_kwargs.update(
+                    {
+                        "ndvi_exr_path": self.ndvi_exr_path,
+                        "exr_capture_x_cm": (
+                            self.exr_capture_x_spin.value()
+                        ),
+                        "exr_capture_y_cm": (
+                            self.exr_capture_y_spin.value()
+                        ),
+                        "exr_ortho_width_cm": (
+                            self.exr_ortho_width_spin.value()
+                        ),
+                        "exr_encoded": (
+                            self.exr_encoded_checkbox.isChecked()
+                        ),
+                    }
+                )
+                selected_names.append("NDVI (EXR)")
+            else:
+                botanical_kwargs.update(
+                    {
+                        "time_from": self.time_from,
+                        "time_to": self.time_to,
+                    }
+                )
+                selected_names.append("NDVI (Sentinel-2)")
+
             selected_modules["botanical"] = (
                 self.botanical_runner,
-                {
-                    "target_geometry": self.target_geometry,
-                    "time_from": self.time_from,
-                    "time_to": self.time_to,
-                },
+                botanical_kwargs,
             )
-            selected_names.append("NDVI")
             self.botanical_result = None
 
         if run_obstacle:
@@ -1513,18 +1630,17 @@ class MainWindow(QMainWindow):
                 fallback_crs=output.crs,
             )
 
+
         if "botanical" in results:
             self._receive_module_result(
-                name="Botanical suitability",
+                name="NDVI",
                 destination=self.ndvi_view,
                 raw_result=results["botanical"],
-                default_title="Botanical suitability field",
-                default_colour_map="YlGn",
-                default_colourbar_label=(
-                    "Botanical suitability field height"
-                ),
+                default_title="NDVI",
+                default_colour_map="RdYlGn",
+                default_colourbar_label="NDVI",
                 result_attribute="botanical_result",
-                display_mode="surface",
+                display_mode="raster",
                 surface_colour_map=None,
                 fallback_transform=output.transform,
                 fallback_crs=output.crs,
@@ -1753,6 +1869,19 @@ class MainWindow(QMainWindow):
         self.load_dem_button.setEnabled(not is_busy)
         self.slow_mode_action.setEnabled(not is_busy)
         self.fast_mode_action.setEnabled(not is_busy)
+
+        self.sentinel_ndvi_radio.setEnabled(not is_busy)
+        self.exr_ndvi_radio.setEnabled(not is_busy)
+
+        exr_controls_enabled = (
+            self.exr_ndvi_radio.isChecked()
+            and not is_busy
+        )
+        self.load_ndvi_exr_button.setEnabled(exr_controls_enabled)
+        self.exr_capture_x_spin.setEnabled(exr_controls_enabled)
+        self.exr_capture_y_spin.setEnabled(exr_controls_enabled)
+        self.exr_ortho_width_spin.setEnabled(exr_controls_enabled)
+        self.exr_encoded_checkbox.setEnabled(exr_controls_enabled)
 
         checkboxes_enabled = has_dem and not is_busy
         self.los_checkbox.setEnabled(checkboxes_enabled)

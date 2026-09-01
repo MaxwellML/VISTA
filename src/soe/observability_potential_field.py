@@ -1,5 +1,6 @@
 """Combine Rivelero component fields into an observability potential field."""
 
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -49,13 +50,7 @@ def build_observability_potential_field(
     ndvi_weight: float = 0.3,
     occlusion_weight: float = 0.2,
 ) -> ObservabilityPotentialFieldResult:
-    """
-    Calculate:
-
-        F = 0.5V + 0.3NDVI - 0.2Occlusion
-
-    The supplied result objects and their arrays are not modified.
-    """
+    """Calculate ``F = 0.5V + 0.3NDVI - 0.2Occlusion``."""
     selected_results = [
         result
         for result in (
@@ -75,7 +70,6 @@ def build_observability_potential_field(
 
     reference = selected_results[0]
     reference_shape = np.asarray(reference.field).shape
-
     component_arrays: list[np.ndarray] = []
 
     if visibility_result is not None:
@@ -99,34 +93,19 @@ def build_observability_potential_field(
         )
         component_arrays.append(occlusion)
 
-    # A cell is valid only when every selected component is valid there.
     valid_mask = np.ones(reference_shape, dtype=bool)
-
     for component in component_arrays:
         valid_mask &= np.isfinite(component)
 
-    field = np.full(
-        reference_shape,
-        np.nan,
-        dtype=np.float32,
-    )
-
+    field = np.full(reference_shape, np.nan, dtype=np.float32)
     field[valid_mask] = 0.0
 
     if visibility_result is not None:
-        field[valid_mask] += (
-            visibility_weight * visibility[valid_mask]
-        )
-
+        field[valid_mask] += visibility_weight * visibility[valid_mask]
     if botanical_result is not None:
-        field[valid_mask] += (
-            ndvi_weight * botanical[valid_mask]
-        )
-
+        field[valid_mask] += ndvi_weight * botanical[valid_mask]
     if occlusion_result is not None:
-        field[valid_mask] -= (
-            occlusion_weight * occlusion[valid_mask]
-        )
+        field[valid_mask] -= occlusion_weight * occlusion[valid_mask]
 
     return ObservabilityPotentialFieldResult(
         field=field,
@@ -150,11 +129,9 @@ def build_observability_potential_field(
         ),
     )
 
-def _validate_matching_grids(
-    *results: object,
-) -> None:
-    """Require selected fields to have identical grids."""
 
+def _validate_matching_grids(*results: object) -> None:
+    """Require selected fields to have identical grids."""
     if not results:
         raise ValueError("No component results were supplied.")
 
@@ -176,6 +153,6 @@ def _validate_matching_grids(
 
         if result.crs != reference.crs:
             raise ValueError(
-                "The selected component fields have different "
-                "coordinate systems."
+                "The selected component fields have different coordinate "
+                "systems."
             )
