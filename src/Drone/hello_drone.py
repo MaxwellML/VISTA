@@ -39,23 +39,13 @@ FLIGHT_ALTITUDE_M = 30.0
 FLIGHT_VELOCITY_MPS = 7
 TELEMETRY_INTERVAL_SEC = 0.25
 
-# ADDED: CONTINUOUS ORIENTATION CORRECTION
 # Keep the drone at one absolute yaw throughout the autonomous survey.
 # Project AirSim yaw is in radians in NED/world coordinates: 0 rad = North.
-# The autonomous waypoint controller below now re-reads the ACTUAL yaw and
-# reissues this absolute yaw target on every short control pulse.
+# This absolute target is supplied to every autonomous movement command.
 SURVEY_YAW_DEG = 0.0
 SURVEY_YAW_RAD = float(np.deg2rad(SURVEY_YAW_DEG))
 YAW_CORRECTION_MARGIN_DEG = 1.0
 YAW_CORRECTION_TIMEOUT_SEC = 10.0
-
-# ADDED: CONTINUOUS ORIENTATION CORRECTION
-# Recompute position + orientation control at 10 Hz instead of issuing one long
-# waypoint command and relying on its initial yaw request for the entire leg.
-AUTONOMOUS_CONTROL_INTERVAL_SEC = 0.10
-YAW_WARNING_LOG_INTERVAL_SEC = 1.0
-
-
 
 MIN_VISIBLE_FRACTION_FOR_OBSERVATION = 0.90
 
@@ -84,14 +74,6 @@ WAYPOINT_SETTLE_SEC = 0.25
 WAYPOINT_TIMEOUT_SAFETY_FACTOR = 1.5
 WAYPOINT_TIMEOUT_BUFFER_SEC = 10.0
 MIN_WAYPOINT_TIMEOUT_SEC = 15.0
-
-# Log an error if the drone is still away from its waypoint but its measured
-# ground-truth speed stays near zero for this long.
-MOTION_CHECK_INTERVAL_SEC = 0.5
-STALL_SPEED_THRESHOLD_MPS = 0.25
-STALL_DURATION_SEC = 2.0
-STALL_STARTUP_GRACE_SEC = 2.0
-
 
 MAX_WAYPOINT_ATTEMPTS = 2
 
@@ -885,12 +867,14 @@ async def correct_survey_orientation(drone):
 
 async def move_to_waypoint_precisely(drone, waypoint):
     """
-    Fly to a waypoint using a short closed-loop control pulse every
-    AUTONOMOUS_CONTROL_INTERVAL_SEC.
+    Fly to a waypoint with one uninterrupted position command.
 
+    The previous implementation awaited a sequence of 0.10-second velocity
+    commands. Each command expired before the next one was issued, repeatedly
+    braking the drone and causing the stall detector to mistake that controller
+    behaviour for a physical stall. A single position command lets Project
+    AirSim accelerate, cruise, and decelerate normally while holding survey yaw.
     """
-
-    loop = asyncio.get_running_loop()
     last_failure = None
 
     for attempt in range(1, MAX_WAYPOINT_ATTEMPTS + 1):
@@ -922,188 +906,102 @@ async def move_to_waypoint_precisely(drone, waypoint):
             )
 
         projectairsim_log().info(
-            "Moving to %s with %.2f s closed-loop control pulses at %.1f m/s | "
+            "Moving continuously to %s at %.1f m/s | "
             "waypoint NED=(%.3f, %.3f, %.3f) | distance=%.1f m | "
-            "target yaw=%.1f deg | attempt=%d/%d",
+            "timeout=%.1f s | target yaw=%.1f deg | attempt=%d/%d",
             waypoint["id"],
-            AUTONOMOUS_CONTROL_INTERVAL_SEC,
             FLIGHT_VELOCITY_MPS,
             waypoint["x"],
             waypoint["y"],
             waypoint["z"],
             distance,
+            timeout_sec,
             SURVEY_YAW_DEG,
             attempt,
             MAX_WAYPOINT_ATTEMPTS,
         )
 
-        attempt_started = loop.time()
-        monitor_started = attempt_started
-        stall_started = None
-        last_yaw_warning = attempt_started - YAW_WARNING_LOG_INTERVAL_SEC
-
-        previous_x = start_x
-        previous_y = start_y
-        previous_z = start_z
-        previous_time = attempt_started
-
         failure_reason = None
 
-        while True:
-
-            # Re-read the REAL position and orientation before every command pulse.
-            pose = drone.get_ground_truth_pose()
-            position = pose["translation"]
-
-            current_x = float(position["x"])
-            current_y = float(position["y"])
-            current_z = float(position["z"])
-            current_yaw_rad = get_pose_yaw_rad(pose)
-
-            current_time = loop.time()
-
-            dx = waypoint["x"] - current_x
-            dy = waypoint["y"] - current_y
-            dz = waypoint["z"] - current_z
-
-            horizontal_error = (dx**2 + dy**2) ** 0.5
-            vertical_error = abs(dz)
-
-            #orientation correction
-            yaw_error_rad = wrap_angle_rad(SURVEY_YAW_RAD - current_yaw_rad)
-            yaw_error_deg = float(np.rad2deg(yaw_error_rad))
-
-            at_waypoint = (
-                horizontal_error <= POSITION_TOLERANCE_M
-                and vertical_error <= POSITION_TOLERANCE_M
-            )
-
-            if at_waypoint:
-
-                stop_task = await drone.move_by_velocity_z_async(
-                    v_north=0.0,
-                    v_east=0.0,
-                    z=waypoint["z"],
-                    duration=AUTONOMOUS_CONTROL_INTERVAL_SEC,
-                    yaw_control_mode=YawControlMode.MaxDegreeOfFreedom,
-                    yaw_is_rate=False,
-                    yaw=SURVEY_YAW_RAD,
-                )#stay at point and continue to correct yaw.
-                await stop_task
-
-                final_pose = drone.get_ground_truth_pose()
-                final_yaw_rad = get_pose_yaw_rad(final_pose)
-                final_yaw_error_deg = float(
-                    np.rad2deg(wrap_angle_rad(SURVEY_YAW_RAD - final_yaw_rad))
-                )
-
-                projectairsim_log().info(
-                    "Reached %s | actual=(%.3f, %.3f, %.3f) | "
-                    "horizontal error=%.2f m vertical error=%.2f m | "
-                    "yaw error=%+.2f deg",
-                    waypoint["id"],
-                    current_x,
-                    current_y,
-                    current_z,
-                    horizontal_error,
-                    vertical_error,
-                    final_yaw_error_deg,
-                )
-                return current_x, current_y, current_z
-
-            elapsed = current_time - attempt_started
-            if elapsed >= timeout_sec:
-                failure_reason = (
-                    f"Timed out moving to waypoint {waypoint['id']} after "
-                    f"{elapsed:.2f} s"
-                )
-                projectairsim_log().error(failure_reason)
-                break
-
-
-            dt = max(current_time - previous_time, 1e-6)
-            travelled = (
-                (current_x - previous_x) ** 2
-                + (current_y - previous_y) ** 2
-                + (current_z - previous_z) ** 2
-            ) ** 0.5
-            measured_speed = travelled / dt
-
-            past_startup_grace = (
-                current_time - monitor_started >= STALL_STARTUP_GRACE_SEC
-            )
-
-            if (
-                past_startup_grace
-                and measured_speed < STALL_SPEED_THRESHOLD_MPS
-            ):
-                if stall_started is None:
-                    stall_started = current_time
-                elif current_time - stall_started >= STALL_DURATION_SEC:
-                    failure_reason = (
-                        f"Drone stalled while moving to waypoint {waypoint['id']}"
-                    )
-                    projectairsim_log().error(
-                        "DRONE STALL detected while moving to %s | "
-                        "measured speed=%.2f m/s | actual=(%.3f, %.3f, %.3f) | "
-                        "horizontal error=%.2f m vertical error=%.2f m",
-                        waypoint["id"],
-                        measured_speed,
-                        current_x,
-                        current_y,
-                        current_z,
-                        horizontal_error,
-                        vertical_error,
-                    )
-                    break
-            else:
-                stall_started = None
-
-            # ADDED: CONTINUOUS ORIENTATION CORRECTION
-            # Log sustained heading error at most once per second. The correction
-            # itself is still reissued every control pulse, including when the
-            # error is inside the configured margin.
-            if (
-                abs(yaw_error_deg) > YAW_CORRECTION_MARGIN_DEG
-                and current_time - last_yaw_warning
-                >= YAW_WARNING_LOG_INTERVAL_SEC
-            ):
-                projectairsim_log().warning(
-                    "Yaw correction active | target=%.2f deg | "
-                    "actual=%.2f deg | error=%+.2f deg",
-                    SURVEY_YAW_DEG,
-                    float(np.rad2deg(current_yaw_rad)),
-                    yaw_error_deg,
-                )
-                last_yaw_warning = current_time
-
-
-            if horizontal_error > 1e-9:
-                commanded_speed = min(
-                    FLIGHT_VELOCITY_MPS,
-                    max(0.5, horizontal_error),
-                )
-                v_north = commanded_speed * dx / horizontal_error
-                v_east = commanded_speed * dy / horizontal_error #alter x/y velocity components based on proximity.
-            else:
-                v_north = 0.0
-                v_east = 0.0
-
-            control_task = await drone.move_by_velocity_z_async(
-                v_north=v_north,
-                v_east=v_east,
-                z=waypoint["z"],
-                duration=AUTONOMOUS_CONTROL_INTERVAL_SEC,
+        try:
+            move_task = await drone.move_to_position_async(
+                north=waypoint["x"],
+                east=waypoint["y"],
+                down=waypoint["z"],
+                velocity=FLIGHT_VELOCITY_MPS,
+                timeout_sec=timeout_sec,
                 yaw_control_mode=YawControlMode.MaxDegreeOfFreedom,
                 yaw_is_rate=False,
                 yaw=SURVEY_YAW_RAD,
             )
-            await control_task
+            await move_task
+        except Exception as err:
+            failure_reason = (
+                f"Movement command failed for waypoint {waypoint['id']}: {err}"
+            )
 
-            previous_x = current_x
-            previous_y = current_y
-            previous_z = current_z
-            previous_time = current_time
+        # Let the position controller settle, then verify using ground truth.
+        await asyncio.sleep(WAYPOINT_SETTLE_SEC)
+
+        final_pose = drone.get_ground_truth_pose()
+        final_position = final_pose["translation"]
+        final_x = float(final_position["x"])
+        final_y = float(final_position["y"])
+        final_z = float(final_position["z"])
+
+        final_dx = waypoint["x"] - final_x
+        final_dy = waypoint["y"] - final_y
+        final_dz = waypoint["z"] - final_z
+        horizontal_error = (final_dx**2 + final_dy**2) ** 0.5
+        vertical_error = abs(final_dz)
+
+        final_yaw_rad = get_pose_yaw_rad(final_pose)
+        final_yaw_error_deg = float(
+            np.rad2deg(wrap_angle_rad(SURVEY_YAW_RAD - final_yaw_rad))
+        )
+
+        if (
+            horizontal_error <= POSITION_TOLERANCE_M
+            and vertical_error <= POSITION_TOLERANCE_M
+        ):
+            if failure_reason is not None:
+                projectairsim_log().warning(
+                    "%s, but ground truth is within waypoint tolerance",
+                    failure_reason,
+                )
+
+            projectairsim_log().info(
+                "Reached %s | actual=(%.3f, %.3f, %.3f) | "
+                "horizontal error=%.2f m vertical error=%.2f m | "
+                "yaw error=%+.2f deg",
+                waypoint["id"],
+                final_x,
+                final_y,
+                final_z,
+                horizontal_error,
+                vertical_error,
+                final_yaw_error_deg,
+            )
+            return final_x, final_y, final_z
+
+        if failure_reason is None:
+            failure_reason = (
+                f"Waypoint {waypoint['id']} command completed outside the "
+                f"{POSITION_TOLERANCE_M:.1f} m tolerance"
+            )
+
+        projectairsim_log().error(
+            "%s | actual=(%.3f, %.3f, %.3f) | "
+            "horizontal error=%.2f m vertical error=%.2f m | "
+            "yaw error=%+.2f deg",
+            failure_reason,
+            final_x,
+            final_y,
+            final_z,
+            horizontal_error,
+            vertical_error,
+            final_yaw_error_deg,
+        )
 
         last_failure = RuntimeError(
             failure_reason
