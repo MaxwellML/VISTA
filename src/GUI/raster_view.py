@@ -27,6 +27,10 @@ from PySide6.QtCore import QThreadPool, QTimer, Signal
 from PySide6.QtGui import QAction
 from rasterio.windows import Window, crop, from_bounds
 
+from .dem_downsampler import (
+    copy_raster_metadata,
+    downsample_raster_for_processing,
+)
 from .worker import FunctionWorker
 
 import numpy as np
@@ -47,7 +51,7 @@ RasterArray = np.ndarray | np.ma.MaskedArray
 
 @dataclass(frozen=True, slots=True)
 class RasterCropInfo:
-    """Metadata for a native-resolution crop written to disk."""
+    """Metadata for the processing crop written to disk."""
 
     path: Path
     transform: Affine
@@ -102,10 +106,12 @@ def write_raster_crop(
     output_path: str | Path,
     coordinate_mode: str | None = None,
 ) -> RasterCropInfo:
-    """Write the visible native-resolution DEM window as a GeoTIFF.
+    """Write the visible DEM window as a processing GeoTIFF.
 
     The crop is copied block by block so creating it does not require loading
-    the entire visible window into memory at once.
+    the entire visible window into memory at once. The original raster is
+    never modified. A finer-than-1-m temporary crop is reduced for processing
+    after it is written, using maximum elevation per destination cell.
     """
 
     source_path = Path(source_path)
@@ -140,25 +146,19 @@ def write_raster_crop(
                     window=destination_window,
                 )
 
-            destination.update_tags(**source.tags())
-            for band_index in source.indexes:
-                destination.update_tags(
-                    band_index,
-                    **source.tags(band_index),
-                )
-                description = source.descriptions[band_index - 1]
-                if description:
-                    destination.set_band_description(
-                        band_index,
-                        description,
-                    )
+            copy_raster_metadata(source, destination)
 
+    downsample_raster_for_processing(output_path)
+
+    # Reopen the final processing raster because downsampling can change every
+    # grid property consumed by the component modules and OPF.
+    with rasterio.open(output_path) as processed:
         return RasterCropInfo(
             path=output_path,
-            transform=transform,
-            crs=source.crs,
-            width=width,
-            height=height,
+            transform=processed.transform,
+            crs=processed.crs,
+            width=processed.width,
+            height=processed.height,
         )
 
 

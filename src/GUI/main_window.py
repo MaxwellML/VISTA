@@ -1760,7 +1760,11 @@ class MainWindow(QMainWindow):
 
         # Component display marks a previous OPF stale, so store/show the newly
         # calculated OPF only after every component has been processed.
-        self._receive_opf_result(output.opf_result)
+        self._receive_opf_result(
+            output.opf_result,
+            fallback_transform=output.transform,
+            fallback_crs=output.crs,
+        )
 
 
     def _store_generated_viewpoints(
@@ -1880,7 +1884,13 @@ class MainWindow(QMainWindow):
         self.tabs.setCurrentWidget(destination)
         self.status_label.setText(f"{name} complete.")
 
-    def _receive_opf_result(self, raw_result: object) -> None:
+    def _receive_opf_result(
+        self,
+        raw_result: object,
+        *,
+        fallback_transform: Any | None = None,
+        fallback_crs: Any | None = None,
+    ) -> None:
         """Store the combined result and display it in the OPF tab."""
 
         try:
@@ -1896,8 +1906,16 @@ class MainWindow(QMainWindow):
                 default_title="Observability potential field",
                 default_colour_map="viridis",
                 default_colourbar_label="Observability potential",
-                fallback_transform=self.dem_transform,
-                fallback_crs=self.dem_crs,
+                fallback_transform=(
+                    fallback_transform
+                    if fallback_transform is not None
+                    else self.dem_transform
+                ),
+                fallback_crs=(
+                    fallback_crs
+                    if fallback_crs is not None
+                    else self.dem_crs
+                ),
             )
 
             self._build_viewpoint_results()
