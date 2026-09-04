@@ -1,3 +1,4 @@
+#obstacle_occlusion_field.py
 """
 Generate Rivelero's obstacle-occlusion field from OpenStreetMap features.
 

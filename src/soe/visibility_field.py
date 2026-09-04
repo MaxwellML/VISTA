@@ -1,3 +1,4 @@
+#visibility_field.py
 """
 Generate Rivelero's initial 3D visibility field using GDAL viewsheds.
 

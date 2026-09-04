@@ -1,3 +1,4 @@
+#botanical_suitability_field.py
 """
 Generate Rivelero's botanical suitability field from Sentinel-2 NDVI.
 

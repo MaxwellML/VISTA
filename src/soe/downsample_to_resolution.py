@@ -1,3 +1,4 @@
+#downsample_to_resolution.py
 """Merge candidate viewpoints into fixed-resolution square regions."""
 
 from __future__ import annotations

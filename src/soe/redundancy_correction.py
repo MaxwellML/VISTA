@@ -1,3 +1,4 @@
+#redundancy_correction.py
 """Reduce viewpoint sets using aggregate OPF contribution.
 
 This first version deliberately DOES NOT account for overlap between viewpoint

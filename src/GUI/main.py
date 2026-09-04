@@ -1,3 +1,4 @@
+#main.py
 """Application entry point for the Rivelero GUI."""
 
 import sys

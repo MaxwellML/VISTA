@@ -1,14 +1,28 @@
 """
-Converts an Unreal SceneCapture2D Perspective SceneDepth EXR
+Converts an Unreal SceneCapture2D ORTHOGRAPHIC SceneDepth EXR
 to a GeoTIFF DSM for use in Rivelero.
 
 IMPORTANT:
-- This is for a Perspective SceneCapture2D, NOT Orthographic.
+- This is for an Orthographic SceneCapture2D, NOT Perspective.
 - It assumes the camera looks vertically downward.
-- It back-projects each pixel into world XYZ, then rasterises
-  those 3D points onto a regular XY grid.
-- Because it keeps the maximum elevation in each output cell,
-  the result is a DSM (surface model), not a bare-earth DEM.
+- It assumes Capture Source = SceneDepth in R.
+- It assumes Unreal units are centimetres.
+- It writes the orthographic capture directly to a regular raster grid.
+- Because depth includes trees/road/etc, the output is a DSM
+  (surface model), not a bare-earth DEM.
+
+Assumed camera rotation:
+    Roll  = 0
+    Pitch = 270 degrees (equivalent to -90)
+    Yaw   = 0
+
+CRS:
+- Unreal's local coordinates are not inherently geographic.
+- A synthetic Transverse Mercator projected CRS is embedded into
+  the GeoTIFF so downstream GIS code recognises the raster as
+  projected and measured in metres.
+- This does NOT mean the Unreal scene is actually located at
+  latitude 0 / longitude 0.
 """
 
 from pathlib import Path
@@ -26,8 +40,9 @@ from rasterio.transform import from_origin
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
-INPUT_DEPTH = SCRIPT_DIR / "RT_RuralAustralia_DepthTEST2.exr"
-OUTPUT_TIF = SCRIPT_DIR / "RT_RuralAustralia_DepthTEST2.tif"
+INPUT_DEPTH = SCRIPT_DIR / "RT_RuralAustralia_Depth.EXR"
+OUTPUT_TIF = SCRIPT_DIR / "RT_RuralAustralia_Depth_OrthoDSM.tif"
+
 
 # ------------------------------------------------------------
 # SceneCapture2D properties
@@ -38,36 +53,43 @@ CAPTURE_X_CM = 0.0
 CAPTURE_Y_CM = 0.0
 CAPTURE_Z_CM = 51000.0
 
-# Perspective capture FOV shown in SceneCapture2D Details.
-# Unreal's SceneCapture2D FOV is treated here as horizontal FOV.
-HORIZONTAL_FOV_DEG = 90.0
+# Set this to the SceneCapture2D's Ortho Width from Unreal.
+ORTHO_WIDTH_CM = 7000.0
 
-# This script assumes the camera is looking vertically downward.
-#
-# Your current actor is effectively:
-#   Roll  = 0
-#   Pitch = 270 degrees (equivalent to -90 degrees)
-#   Yaw   = 0
-#
-# If you change the camera orientation, this script must be updated.
+
+# ------------------------------------------------------------
+# Expected render target size
+# ------------------------------------------------------------
 
 EXPECTED_WIDTH = 2048
 EXPECTED_HEIGHT = 2048
 
-# Output raster dimensions.
-# Keeping 2048 x 2048 is sensible because your input is 2048 x 2048.
-OUTPUT_WIDTH = 2048
-OUTPUT_HEIGHT = 2048
 
-UNREAL_LOCAL_COORDINATE_MODE = "unreal_local"
+# ------------------------------------------------------------
+# Depth handling
+# ------------------------------------------------------------
 
 NODATA_VALUE = -9999.0
 
 # Very small / zero depth values are treated as invalid.
 MIN_VALID_DEPTH_CM = 1e-6
 
-# ============================================================
+# Set to a number if you want to reject very large depth values.
+# Example:
+# MAX_VALID_DEPTH_CM = 100000.0
+MAX_VALID_DEPTH_CM = None
 
+
+# ------------------------------------------------------------
+# Metadata
+# ------------------------------------------------------------
+
+COORDINATE_MODE = "synthetic_projected_unreal_local"
+
+
+# ============================================================
+# READ EXR
+# ============================================================
 
 print(f"Reading: {INPUT_DEPTH}")
 print(f"Exists:  {INPUT_DEPTH.exists()}")
@@ -77,10 +99,6 @@ if not INPUT_DEPTH.exists():
         f"Could not find EXR file:\n{INPUT_DEPTH}"
     )
 
-
-# ============================================================
-# READ EXR
-# ============================================================
 
 with OpenEXR.File(
     str(INPUT_DEPTH),
@@ -92,7 +110,6 @@ with OpenEXR.File(
     print(f"EXR channels: {list(channels.keys())}")
 
     # SceneDepth is expected in R.
-    # Be a little defensive in case channel naming differs.
     if "R" in channels:
         depth_channel_name = "R"
 
@@ -116,6 +133,10 @@ with OpenEXR.File(
     )
 
 
+# ============================================================
+# VALIDATE EXR
+# ============================================================
+
 print(f"EXR shape: {depth_cm.shape}")
 print(f"EXR dtype: {depth_cm.dtype}")
 
@@ -131,12 +152,14 @@ if depth_cm.shape != (EXPECTED_HEIGHT, EXPECTED_WIDTH):
         f"but got {depth_cm.shape[1]}x{depth_cm.shape[0]}"
     )
 
+
 finite_depth = depth_cm[np.isfinite(depth_cm)]
 
 if finite_depth.size == 0:
     raise ValueError(
         "The SceneDepth EXR contains no finite depth values."
     )
+
 
 print(
     f"Raw depth range: "
@@ -146,199 +169,74 @@ print(
 
 
 # ============================================================
-# BUILD A PERSPECTIVE RAY FOR EVERY PIXEL
+# VALID DEPTH PIXELS
 # ============================================================
-#
-# Unreal camera local axes:
-#   +X = forward
-#   +Y = right
-#   +Z = up
-#
-# We treat the FOV as horizontal FOV.
-# For each pixel we build a ray in camera-local space.
-
-height, width = depth_cm.shape
-
-aspect = width / height
-horizontal_fov_rad = np.deg2rad(HORIZONTAL_FOV_DEG)
-
-vertical_fov_rad = 2.0 * np.arctan(
-    np.tan(horizontal_fov_rad / 2.0) / aspect
-)
-
-tan_half_hfov = np.tan(horizontal_fov_rad / 2.0)
-tan_half_vfov = np.tan(vertical_fov_rad / 2.0)
-
-# Pixel-centre coordinates in normalized image space:
-#   u = -1 at left, +1 at right
-#   v = +1 at top,  -1 at bottom
-u = (
-    (np.arange(width, dtype=np.float64) + 0.5)
-    / width
-    * 2.0
-    - 1.0
-)
-
-v = (
-    1.0
-    - (np.arange(height, dtype=np.float64) + 0.5)
-    / height
-    * 2.0
-)
-
-u_grid, v_grid = np.meshgrid(u, v)
-
-# Camera-local direction before normalization:
-#
-# [forward, right, up] =
-# [1,
-#  u * tan(hfov/2),
-#  v * tan(vfov/2)]
-ray_forward = np.ones_like(u_grid, dtype=np.float64)
-ray_right = u_grid * tan_half_hfov
-ray_up = v_grid * tan_half_vfov
-
-
-# ============================================================
-# CAMERA-LOCAL RAYS -> WORLD RAYS
-# ============================================================
-#
-# This script assumes:
-#   Roll  = 0
-#   Pitch = -90 (or 270)
-#   Yaw   = 0
-#
-# For that orientation:
-#   camera local +forward -> world -Z
-#   camera local +right   -> world +Y
-#   camera local +up      -> world +X
-#
-# So:
-ray_world_x = ray_up
-ray_world_y = ray_right
-ray_world_z = -ray_forward
-
-
-# ============================================================
-# BACK-PROJECT PERSPECTIVE SCENE DEPTH
-# ============================================================
-#
-# Unreal SceneDepth here is view-space/forward depth,
-# NOT Euclidean distance along a normalized viewing ray.
-#
-# For a perspective camera:
-#
-# camera-local point =
-#
-#   forward = depth
-#   right   = depth * u * tan(HFOV / 2)
-#   up      = depth * v * tan(VFOV / 2)
-#
-# Camera orientation:
-#
-#   Pitch = -90 / 270
-#   Yaw   = 0
-#   Roll  = 0
-#
-# Therefore:
-#
-#   camera forward -> world -Z
-#   camera right   -> world +Y
-#   camera up      -> world +X
 
 valid = (
     np.isfinite(depth_cm)
     & (depth_cm > MIN_VALID_DEPTH_CM)
 )
 
+if MAX_VALID_DEPTH_CM is not None:
+    valid &= depth_cm < MAX_VALID_DEPTH_CM
+
+
 if not np.any(valid):
     raise ValueError(
         "No valid positive SceneDepth pixels were found."
     )
 
-depth_cm_64 = depth_cm.astype(np.float64)
-
-camera_right_offset_cm = (
-    depth_cm_64 * u_grid * tan_half_hfov
-)
-
-camera_up_offset_cm = (
-    depth_cm_64 * v_grid * tan_half_vfov
-)
-
-world_x_cm = np.full(
-    depth_cm.shape,
-    np.nan,
-    dtype=np.float64,
-)
-
-world_y_cm = np.full(
-    depth_cm.shape,
-    np.nan,
-    dtype=np.float64,
-)
-
-world_z_cm = np.full(
-    depth_cm.shape,
-    np.nan,
-    dtype=np.float64,
-)
-
-world_x_cm[valid] = (
-    CAPTURE_X_CM
-    + camera_up_offset_cm[valid]
-)
-
-world_y_cm[valid] = (
-    CAPTURE_Y_CM
-    + camera_right_offset_cm[valid]
-)
-
-world_z_cm[valid] = (
-    CAPTURE_Z_CM
-    - depth_cm_64[valid]
-)
-
-world_x_m = world_x_cm / 100.0
-world_y_m = world_y_cm / 100.0
-elevation_m = world_z_cm / 100.0
-
-
-# ============================================================
-# RASTERISE BACK-PROJECTED POINTS TO A REGULAR XY GRID
-# ============================================================
-#
-# Since this is a perspective image, pixels are NOT already on
-# a regular ground grid.
-#
-# So we:
-# 1. take every valid pixel's world X, world Y, world Z
-# 2. define a regular XY raster extent
-# 3. assign each sample to a raster cell
-# 4. keep the maximum Z per cell (DSM behaviour)
-
-x_vals = world_x_m[valid].ravel()
-y_vals = world_y_m[valid].ravel()
-z_vals = elevation_m[valid].ravel()
-
-west = float(np.min(x_vals))
-east = float(np.max(x_vals))
-south = float(np.min(y_vals))
-north = float(np.max(y_vals))
-
-if not (east > west and north > south):
-    raise ValueError(
-        "Invalid projected bounds derived from the perspective capture."
-    )
-
-pixel_size_x_m = (east - west) / OUTPUT_WIDTH
-pixel_size_y_m = (north - south) / OUTPUT_HEIGHT
 
 print(
-    f"Projected bounds: "
-    f"W={west:.3f}, E={east:.3f}, "
-    f"S={south:.3f}, N={north:.3f}"
+    f"Valid depth pixels: "
+    f"{np.count_nonzero(valid):,} / "
+    f"{depth_cm.size:,}"
 )
+
+
+# ============================================================
+# ORTHOGRAPHIC GEOMETRY
+# ============================================================
+
+height, width = depth_cm.shape
+
+aspect = width / height
+
+
+# Unreal Ortho Width is the horizontal span of the camera view.
+ortho_width_cm = float(ORTHO_WIDTH_CM)
+
+ortho_height_cm = (
+    ortho_width_cm / aspect
+)
+
+
+# Convert capture dimensions to metres.
+ortho_width_m = (
+    ortho_width_cm / 100.0
+)
+
+ortho_height_m = (
+    ortho_height_cm / 100.0
+)
+
+
+# Each orthographic input pixel already corresponds to a fixed
+# ground-grid location.
+pixel_size_x_m = (
+    ortho_width_m / width
+)
+
+pixel_size_y_m = (
+    ortho_height_m / height
+)
+
+
+print()
+print("----- ORTHOGRAPHIC CAPTURE -----")
+print(f"Aspect ratio:      {aspect:.6f}")
+print(f"Ortho width:       {ortho_width_m:.6f} m")
+print(f"Ortho height:      {ortho_height_m:.6f} m")
 
 print(
     f"Output pixel size: "
@@ -346,91 +244,173 @@ print(
     f"{pixel_size_y_m:.6f} m"
 )
 
-# Map projected XY to raster row/col.
-cols = np.floor((x_vals - west) / pixel_size_x_m).astype(np.int64)
-rows = np.floor((north - y_vals) / pixel_size_y_m).astype(np.int64)
 
-# Clip edge cases caused by points lying exactly on the max boundary.
-cols = np.clip(cols, 0, OUTPUT_WIDTH - 1)
-rows = np.clip(rows, 0, OUTPUT_HEIGHT - 1)
+# ============================================================
+# DEPTH -> ELEVATION
+# ============================================================
+#
+# For a vertically downward orthographic SceneCapture:
+#
+#     surface Z = camera Z - SceneDepth
+#
+# Unreal units are centimetres, so divide by 100 for metres.
+# ============================================================
 
-flat_idx = rows * OUTPUT_WIDTH + cols
+depth_cm_64 = depth_cm.astype(np.float64)
 
-# DSM raster: keep max elevation per cell.
-dsm_flat = np.full(
-    OUTPUT_WIDTH * OUTPUT_HEIGHT,
-    -np.inf,
+
+elevation_m = np.full(
+    depth_cm.shape,
+    NODATA_VALUE,
     dtype=np.float32,
 )
 
-np.maximum.at(
-    dsm_flat,
-    flat_idx,
-    z_vals.astype(np.float32),
-)
 
-# Optional diagnostics: count how many samples land in each cell.
-count_flat = np.zeros(
-    OUTPUT_WIDTH * OUTPUT_HEIGHT,
-    dtype=np.uint32,
-)
-np.add.at(count_flat, flat_idx, 1)
-
-dsm = dsm_flat.reshape((OUTPUT_HEIGHT, OUTPUT_WIDTH))
-sample_count = count_flat.reshape((OUTPUT_HEIGHT, OUTPUT_WIDTH))
-
-valid_cells = np.isfinite(dsm)
-
-filled_cells = int(np.count_nonzero(valid_cells))
-total_cells = int(dsm.size)
-
-print(
-    f"Rasterised cells with data: "
-    f"{filled_cells:,} / {total_cells:,}"
-)
-
-# Convert empty cells to nodata.
-dsm[~valid_cells] = NODATA_VALUE
-
-if filled_cells == 0:
-    raise ValueError(
-        "The rasterised DSM contains no valid cells."
+elevation_m[valid] = (
+    (
+        CAPTURE_Z_CM
+        - depth_cm_64[valid]
     )
+    / 100.0
+).astype(np.float32)
+
+
+valid_out = (
+    np.isfinite(elevation_m)
+    & (elevation_m != NODATA_VALUE)
+)
+
+
+if not np.any(valid_out):
+    raise ValueError(
+        "The output DSM contains no valid pixels."
+    )
+
+
+values = elevation_m[valid_out]
+
+
+print()
+print(
+    f"DSM elevation range: "
+    f"{values.min():.3f} m -> "
+    f"{values.max():.3f} m"
+)
 
 
 # ============================================================
 # BUILD GEOTRANSFORM
 # ============================================================
+#
+# Camera orientation:
+#
+#   camera local +forward -> world -Z
+#   camera local +right   -> world +Y
+#   camera local +up      -> world +X
+#
+# Therefore, for this camera rotation:
+#
+#   raster columns -> Unreal Y
+#   raster rows    -> Unreal X
+#
+# We represent:
+#
+#   Unreal Y as raster Easting
+#   Unreal X as raster Northing
+# ============================================================
+
+
+west_m = (
+    CAPTURE_Y_CM
+    - ortho_width_cm / 2.0
+) / 100.0
+
+
+east_m = (
+    CAPTURE_Y_CM
+    + ortho_width_cm / 2.0
+) / 100.0
+
+
+north_m = (
+    CAPTURE_X_CM
+    + ortho_height_cm / 2.0
+) / 100.0
+
+
+south_m = (
+    CAPTURE_X_CM
+    - ortho_height_cm / 2.0
+) / 100.0
+
+
+print()
+print(
+    f"Bounds: "
+    f"W={west_m:.3f}, "
+    f"E={east_m:.3f}, "
+    f"S={south_m:.3f}, "
+    f"N={north_m:.3f}"
+)
+
 
 transform = from_origin(
-    west,
-    north,
+    west_m,
+    north_m,
     pixel_size_x_m,
     pixel_size_y_m,
 )
 
-# ============================================================
-# LOCAL UNREAL CRS
-# ============================================================
-#
-# This is NOT a real geographic CRS.
-# It simply tells GIS software:
-#   X and Y are local coordinates
-#   units are metres
-#
-# We interpret:
-#   Unreal X -> Easting
-#   Unreal Y -> Northing
 
-local_crs = CRS.from_wkt(
-    '''
-LOCAL_CS["Unreal Engine Local Coordinates",
-LOCAL_DATUM["Unreal Engine Local Datum",0],
-UNIT["metre",1],
-AXIS["X",EAST],
-AXIS["Y",NORTH]]
-'''
+# ============================================================
+# PROJECTED CRS FOR THE UNREAL LOCAL WORLD
+# ============================================================
+#
+# Unreal itself does not provide a geographical CRS here.
+#
+# However, Rivelero expects a projected CRS. A LOCAL_CS is not
+# considered projected by PROJ/Rasterio.
+#
+# We therefore embed a valid Transverse Mercator CRS whose units
+# are metres.
+#
+# The Unreal local origin remains (0, 0).
+#
+# IMPORTANT:
+# This CRS is SYNTHETIC.
+#
+# It does NOT mean that the Rural Australia environment is
+# physically located at latitude 0 / longitude 0.
+#
+# Its purpose is to give the synthetic Unreal scene a valid
+# planar projected coordinate system for GIS calculations.
+# ============================================================
+
+
+projected_crs = CRS.from_proj4(
+    "+proj=tmerc "
+    "+lat_0=0 "
+    "+lon_0=0 "
+    "+k=1 "
+    "+x_0=0 "
+    "+y_0=0 "
+    "+datum=WGS84 "
+    "+units=m "
+    "+no_defs"
 )
+
+
+# Verify before writing.
+if not projected_crs.is_projected:
+    raise RuntimeError(
+        "Configured CRS is not recognised as a projected CRS."
+    )
+
+
+print()
+print("----- CRS -----")
+print(f"CRS:       {projected_crs}")
+print(f"Projected: {projected_crs.is_projected}")
 
 
 # ============================================================
@@ -441,34 +421,94 @@ with rasterio.open(
     OUTPUT_TIF,
     "w",
     driver="GTiff",
-    width=OUTPUT_WIDTH,
-    height=OUTPUT_HEIGHT,
+
+    width=width,
+    height=height,
+
     count=1,
     dtype="float32",
-    crs=local_crs,
+
+    # This is what actually embeds the projected CRS
+    # into the GeoTIFF.
+    crs=projected_crs,
+
     transform=transform,
+
     nodata=NODATA_VALUE,
+
     compress="deflate",
 ) as dst:
 
     dst.write(
-        dsm.astype(np.float32),
+        elevation_m.astype(np.float32),
         1,
     )
 
+
+    # Additional descriptive metadata.
+    # These are NOT substitutes for the actual crs= parameter;
+    # they simply explain how the raster was produced.
     dst.update_tags(
-        source="Unreal Engine SceneCapture2D Perspective SceneDepth DSM",
-        coordinate_mode=UNREAL_LOCAL_COORDINATE_MODE,
+
+        source=(
+            "Unreal Engine SceneCapture2D "
+            "Orthographic SceneDepth DSM"
+        ),
+
+        coordinate_mode=COORDINATE_MODE,
+
         capture_source="SceneDepth in R",
-        projection_type="Perspective",
-        horizontal_fov_deg=str(HORIZONTAL_FOV_DEG),
-        unreal_capture_x_cm=str(CAPTURE_X_CM),
-        unreal_capture_y_cm=str(CAPTURE_Y_CM),
-        unreal_capture_z_cm=str(CAPTURE_Z_CM),
-        output_pixel_size_x_m=str(pixel_size_x_m),
-        output_pixel_size_y_m=str(pixel_size_y_m),
-        assumed_rotation="Roll=0, Pitch=270(-90), Yaw=0",
-        rasterisation_method="max_elevation_per_cell",
+
+        projection_type="Orthographic",
+
+        projected_crs_type=(
+            "Synthetic local Transverse Mercator"
+        ),
+
+        synthetic_crs="true",
+
+        crs_wkt=projected_crs.to_wkt(),
+
+        ortho_width_cm=str(ORTHO_WIDTH_CM),
+
+        ortho_height_cm=str(
+            ortho_height_cm
+        ),
+
+        unreal_capture_x_cm=str(
+            CAPTURE_X_CM
+        ),
+
+        unreal_capture_y_cm=str(
+            CAPTURE_Y_CM
+        ),
+
+        unreal_capture_z_cm=str(
+            CAPTURE_Z_CM
+        ),
+
+        output_pixel_size_x_m=str(
+            pixel_size_x_m
+        ),
+
+        output_pixel_size_y_m=str(
+            pixel_size_y_m
+        ),
+
+        assumed_rotation=(
+            "Roll=0, Pitch=270(-90), Yaw=0"
+        ),
+
+        axis_mapping=(
+            "Raster columns -> Unreal Y; "
+            "Raster rows -> Unreal X"
+        ),
+
+        note=(
+            "Synthetic projected CRS used for Unreal "
+            "local planar coordinates. "
+            "Not a real-world geographic location."
+        ),
     )
 
 
@@ -480,42 +520,90 @@ print(f"Written: {OUTPUT_TIF}")
 # VERIFY OUTPUT
 # ============================================================
 
-with rasterio.open(OUTPUT_TIF) as src:
+with rasterio.open(
+    OUTPUT_TIF
+) as src:
 
     print()
     print("----- OUTPUT GEOTIFF -----")
 
-    print(f"Size:       {src.width} x {src.height}")
-    print(f"CRS:        {src.crs}")
-    print(f"Transform:  {src.transform}")
-    print(f"Bounds:     {src.bounds}")
-    print(f"Resolution: {src.res}")
+    print(
+        f"Size:         "
+        f"{src.width} x {src.height}"
+    )
+
+    print(
+        f"CRS:          "
+        f"{src.crs}"
+    )
+
+    print(
+        f"Is projected: "
+        f"{src.crs.is_projected if src.crs else False}"
+    )
+
+    print(
+        f"Transform:    "
+        f"{src.transform}"
+    )
+
+    print(
+        f"Bounds:       "
+        f"{src.bounds}"
+    )
+
+    print(
+        f"Resolution:   "
+        f"{src.res}"
+    )
+
+
+    # Explicitly prove that the CRS survived into the file.
+    if src.crs is None:
+        raise ValueError(
+            "GeoTIFF was written without a CRS."
+        )
+
+
+    if not src.crs.is_projected:
+        raise ValueError(
+            "GeoTIFF CRS is not recognised as projected.\n"
+            f"CRS: {src.crs}"
+        )
+
 
     out = src.read(1)
 
-    valid_out = (
+
+    valid_written = (
         np.isfinite(out)
         & (out != NODATA_VALUE)
     )
 
-    if not np.any(valid_out):
+
+    if not np.any(valid_written):
         raise ValueError(
-            "The written GeoTIFF contains no valid DSM pixels."
+            "The written GeoTIFF contains "
+            "no valid DSM pixels."
         )
 
-    values = out[valid_out]
+
+    written_values = out[valid_written]
+
 
     print(
-        f"DSM range:  "
-        f"{values.min():.3f} m -> "
-        f"{values.max():.3f} m"
+        f"DSM range:    "
+        f"{written_values.min():.3f} m -> "
+        f"{written_values.max():.3f} m"
     )
 
+
     print(
-        f"Valid cells: "
-        f"{np.count_nonzero(valid_out):,} / "
+        f"Valid cells:  "
+        f"{np.count_nonzero(valid_written):,} / "
         f"{out.size:,}"
     )
+
 
 print()
 print("Conversion complete.")

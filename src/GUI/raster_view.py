@@ -1,3 +1,4 @@
+#raster_view.py
 """Matplotlib-based raster display widget for PySide6."""
 
 from __future__ import annotations

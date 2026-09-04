@@ -1,3 +1,4 @@
+#viewpoint_generator.py
 """Generate robust candidate viewpoints from an OPF."""
 
 from __future__ import annotations
