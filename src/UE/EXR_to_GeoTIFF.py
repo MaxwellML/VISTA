@@ -84,7 +84,7 @@ MAX_VALID_DEPTH_CM = None
 # Metadata
 # ------------------------------------------------------------
 
-COORDINATE_MODE = "synthetic_projected_unreal_local"
+COORDINATE_MODE = "unreal_local"
 
 
 # ============================================================
